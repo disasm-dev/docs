@@ -1,0 +1,210 @@
+openapi: 3.1.0
+info:
+  title: Ticketmaster tmpt
+  version: 1.0.0
+  description: |
+    Builds the reCAPTCHA Enterprise reload request that earns Ticketmaster's `tmpt` cookie on `www.ticketmaster.com`.
+
+    You fetch the reCAPTCHA anchor page from your own session and send it to `POST /tmpt`. We return the reload request
+    body. You post it to `/reload`, then hand the token to Ticketmaster, which sets `tmpt`. Our API does not not generate
+    the final tmpt cookie for you.
+
+    See the [tmpt guide](/ticketmaster/tmpt/) for the full flow.
+servers:
+  - url: https://tmpt.antibotapi.com
+    description: Production
+security:
+  - ApiKey: []
+tags:
+  - name: tmpt
+paths:
+  /config:
+    get:
+      tags: [tmpt]
+      operationId: getConfig
+      summary: Get the reCAPTCHA version
+      description: |
+        Returns the reCAPTCHA release to fetch the anchor page with (the anchor URL's `v` parameter). It changes when
+        Google ships a new release, so read it before each session rather than hardcoding it.
+      parameters:
+        - $ref: '#/components/parameters/Signature'
+      responses:
+        '200':
+          description: The release to use.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Config'
+              example:
+                success: true
+                version: NhfdZHzre16wrc2m6BxEdu7J
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /tmpt:
+    post:
+      tags: [tmpt]
+      operationId: makeReload
+      summary: Build the reload request
+      description: |
+        Send the anchor page you fetched. Returns the reload request body to post to
+        `https://www.google.com/recaptcha/enterprise/reload?k=6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV`.
+
+        Call it at least 200 ms after the anchor page arrived: a browser cannot reload sooner, so an earlier call is
+        refused with a `400`. Each `200` is billed; nothing else is.
+      parameters:
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TmptRequest'
+            example:
+              user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36
+              cookies: [LANGUAGE=en-us, NDMA=200]
+              anchor_html: <!DOCTYPE HTML><html dir="ltr" lang="en">...
+              anchor_fetched: 1792749801750
+      responses:
+        '200':
+          description: The reload request body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TmptResponse'
+              example:
+                success: true
+                reload: ChhOaGZkWkh6cmUxNndyYzJtNkJ4RWR1N0...
+        '400':
+          description: |
+            Something in the request is wrong, the message says what the issue is. It could be a field missing or of the wrong type, a user
+            agent that is not Chrome 145–155 on Windows, an anchor page that is not one, or `anchor_fetched` less than
+            200 ms before the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                success: false
+                error:
+                  type: validation
+                  message: anchor_fetched is 130 ms before this request; no browser makes the reload in under 191 ms
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: |
+            The anchor page is from a reCAPTCHA release we do not support yet. Fetch the anchor with the `version` from
+            `GET /config`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                success: false
+                error:
+                  type: not_approved
+                  message: 'Build NhfdZHzre166o-vFZrWsq3yu is not supported yet'
+        '501':
+          description: This anchor page is unrecognised. Please contact us for support.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Your API key from the [dashboard](https://dashboard.disasm.dev).
+  parameters:
+    Signature:
+      name: x-signature
+      in: header
+      required: false
+      description: A request signature. Required only when signing is on for your key. See [Authentication](/start/authentication/).
+      schema:
+        type: string
+  responses:
+    Unauthorized:
+      description: The API key is missing, unknown, revoked or out of balance, or its signature is wrong.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            error:
+              type: validation
+              message: x-api-key is required
+    Unavailable:
+      description: Temporarily unavailable. Retry after a few seconds.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Config:
+      type: object
+      required: [success, version]
+      properties:
+        success:
+          type: boolean
+          const: true
+        version:
+          type: string
+          description: The reCAPTCHA release. Use it as the anchor URL's `v` parameter.
+    TmptRequest:
+      type: object
+      required: [user_agent, cookies, anchor_html, anchor_fetched]
+      properties:
+        user_agent:
+          type: string
+          description: |
+            The `User-Agent` your session sends. Chrome 145–155 on Windows. Use the same one for every request in the
+            session.
+        cookies:
+          type: array
+          items:
+            type: string
+          description: |
+            The cookies your session holds for `www.ticketmaster.com` that a page script could read (not `HttpOnly`),
+            one `name=value` string each. Leave out `tmpt`. Send an empty array if there are none.
+        anchor_html:
+          type: string
+          description: The anchor page HTML
+        anchor_fetched:
+          type: integer
+          format: int64
+          description: When the anchor page arrived, in milliseconds since the epoch (`Date.now()` after the response).
+    TmptResponse:
+      type: object
+      required: [success, reload]
+      properties:
+        success:
+          type: boolean
+          const: true
+        reload:
+          type: string
+          contentEncoding: base64
+          description: The reload request body, Base64. Decode it and post the raw bytes.
+    Error:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          const: false
+        error:
+          type: object
+          required: [type, message]
+          properties:
+            type:
+              type: string
+              description: '`validation`, `not_approved`, `unmodelled`, `unavailable` or `internal`.'
+            message:
+              type: string
+              description: What went wrong.

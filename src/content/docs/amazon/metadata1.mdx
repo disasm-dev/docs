@@ -1,0 +1,52 @@
+---
+title: Amazon metadata1
+sidebar:
+  label: metadata1
+description: Generate the metadata1 values Amazon expects on its sign-in form.
+---
+
+Amazon's sign-in form sends a `metadata1` field with the email step and again with the password step. Without a valid
+one the attempt is flagged. We generate both from one request.
+
+Base URL: `https://metadata1.antibotapi.com`
+
+## Generate the payloads
+
+```bash
+curl -X POST https://metadata1.antibotapi.com/metadata1 \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+    "referer": "https://www.amazon.com/",
+    "location": "https://www.amazon.com/ap/signin",
+    "email": "user@example.com",
+    "password_length": 12
+  }'
+```
+
+| Field | What to send |
+| --- | --- |
+| `user_agent` | The `User-Agent` your sign-in requests use. The payloads are bound to it. |
+| `referer` | The page you came to sign-in from. |
+| `location` | The URL of the sign-in page. |
+| `email` | The email address you enter. |
+| `password_length` | The number of characters in the password. |
+
+```json
+{
+  "success": true,
+  "metadata1": {
+    "email": "ECdITeCs:zr7fdAC...",
+    "password": "HmS1pQ9v:8xKf2u..."
+  }
+}
+```
+
+## Use them
+
+Put `metadata1.email` in the `metadata1` field of the email step's form post, and `metadata1.password` in the password
+step's. Send both from the same session, proxy and user agent you gave us.
+
+metadata1 plans are package-only: when a plan is used up, its key stops until you renew. All fields are in the
+[API reference](/api/metadata1/).

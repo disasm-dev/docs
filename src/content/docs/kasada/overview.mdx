@@ -1,0 +1,86 @@
+---
+title: Kasada overview
+sidebar:
+  label: Overview
+description: How a Kasada session works, what we compute, and what you send where.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+<Aside type="note" title="Invite-only beta">
+Apply from the [dashboard](https://dashboard.disasm.dev). During the beta the payload is billed and the proof of work is
+free.
+</Aside>
+
+Kasada protects a site with a script, `ips.js`. The browser runs it and posts the result to the sensor's `/tl`, and
+accepting that post gives the session its tokens, the `x-kpsdk-*` headers. After that, every request to the site's protected endpoints
+carries those tokens plus a fresh proof of work.
+
+We build two things for you: the `/tl` payload from the script your session fetched, and the proof of work for each
+protected request. You make every request to the site yourself, from your own session and proxy. We never fetch the
+script or contact the site.
+
+Base URL: `https://ksd.antibotapi.com`. Requests take about 200 ms the first time we see a script build and 10–20 ms
+after that. Chrome on Windows only.
+
+## The flow
+
+<Steps>
+
+1. Request a protected page or API and get blocked (`403` or `429`).
+2. `GET /mfc` on the sensor. Keep the `x-kpsdk-h` it returns.
+3. `GET /fp`. Read the first `x-kpsdk-ct` and the `im` value from it.
+4. `GET /ips.js` with those values. This is the script.
+5. **Send the script to `POST /tl`** and get the headers and payload back. Billed.
+6. `POST /tl` on the sensor with that payload. Keep the new `x-kpsdk-ct` and the `x-kpsdk-st` it returns.
+7. **Send `st`, `ct` and the API's host to `POST /cd`** for a proof of work. Free.
+8. Make the protected request with `x-kpsdk-ct`, `x-kpsdk-h`, `x-kpsdk-v` and `x-kpsdk-cd`.
+
+</Steps>
+
+Steps 5 and 7 are the calls to us. [Payload](/kasada/payload/) covers steps 1–6 and [Proof of work](/kasada/proof-of-work/)
+covers 7–8.
+
+<Aside type="caution">
+The script belongs to the session that fetched it. Fetch it with the same cookies and proxy you will use for the rest of
+the flow, or the payload is refused.
+</Aside>
+
+## Which headers go where
+
+| Header | Comes from | Send on the sensor's `/tl` | Send on protected requests |
+| --- | --- | --- | --- |
+| `x-kpsdk-ct` | Our `/tl` response, then the sensor's `/tl` response | Ours | The sensor's (newer) |
+| `x-kpsdk-dt` | Our `/tl` response | Yes | No |
+| `x-kpsdk-im` | Our `/tl` response | Yes | No |
+| `x-kpsdk-v` | Our `/tl` response | Yes | Yes |
+| `x-kpsdk-h` | Your `/mfc` response | No | Yes |
+| `x-kpsdk-cd` | Our `/cd` response | No | Yes, a new one each time |
+
+Our `/tl` response also contains `x-kpsdk-r`, `x-kpsdk-dv` and `x-kpsdk-fc` as empty strings, and `x-kpsdk-h` as `01`.
+Do not send them; send `h` from your own `/mfc`. An empty header is not the same as no header, and the sensor can tell.
+
+<Aside type="caution">
+`x-kpsdk-ct` changes after the sensor accepts your payload. Use the one from the sensor's `/tl` response for everything
+afterwards. Sending the old one is the most common reason a good payload still fails.
+</Aside>
+
+## Use a fresh script
+
+A script solves for a few days after it was served. An old one fails with a `502`. If a site that was working starts
+returning `502`, fetch a new `ips.js` first.
+
+## Approved hosts
+
+We accept only hosts approved for your account; any other answers `403` and names the host. Approval is per host, not
+per site:
+
+- `/tl` checks the host in `ips_link`, the host serving the script.
+- `/cd` checks `domain`, the host of the protected API.
+
+They are often different. Twitch serves the script from `k.twitchcdn.net` and its API is `gql.twitch.tv`, so solving
+Twitch needs both approved. Request hosts from the dashboard and list both when they differ.
+
+## Billing
+
+Each `200` from `POST /tl` is one solve. `POST /cd` is free and unmetered, and refused requests cost nothing.

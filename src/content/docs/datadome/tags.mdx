@@ -1,0 +1,74 @@
+---
+title: Tags
+description: Solve DataDome's tags.js challenge (ch, then le) to keep a session trusted.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+Many DataDome sites run `tags.js`, which reports device and behaviour signals. There is no block page for it, but a
+session that never sends tags gets blocked later, often at add to cart. Solving tags raises the session's trust.
+
+Tags are two requests, in order:
+
+- **`ch`** carries browser properties.
+- **`le`** carries events: mouse movement and clicks.
+
+## When to solve tags
+
+Solve them right after the first page loads, before the actions that matter:
+
+1. Request `https://www.example.com` and get a CAPTCHA.
+2. Solve the [CAPTCHA](/datadome/captcha/), retry, and get a `200`.
+3. **Solve tags** (`ch`, then `le`).
+4. Open the product page and add to cart.
+
+Skipping tags also makes `t=bv` show up when your proxy is fine. See the [overview](/datadome/overview/).
+
+## Find the tags request
+
+Open the page in Chrome with [Charles Proxy](https://www.charlesproxy.com) recording. Find the request for `tags.js`,
+then the POST it makes, usually to a URL ending in `/js/`. That POST is where you send the payloads. Note the site's
+DataDome key (`ddk`) in it.
+
+## Solve
+
+<Steps>
+
+1. Get a `ch` payload from us, with `cid` set to your current `datadome` cookie:
+
+   ```bash
+   curl -X POST https://dd.antibotapi.com/tags \
+     -H "x-api-key: YOUR_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "type": "ch",
+       "cid": "<your current datadome cookie>",
+       "site_key": "<the site ddk>",
+       "referer": "https://www.example.com/",
+       "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+       "language": "en-GB",
+       "ip_address": "203.0.113.7"
+     }'
+   ```
+
+2. POST the `payload` unchanged to the site's tags endpoint. The response sets a new `datadome` cookie.
+
+3. Get an `le` payload the same way, with `"type": "le"` and `cid` set to the cookie from step 2.
+
+4. POST that payload too. The `datadome` cookie it sets is your tags-solved cookie. Use it from now on.
+
+</Steps>
+
+| Field | What to send |
+| --- | --- |
+| `type` | `ch`, then `le`. |
+| `cid` | Your current `datadome` cookie. |
+| `site_key` | The site's DataDome key (`ddk`). |
+| `referer` | The last URL you visited, not URL-encoded. |
+| `user_agent` | Your session's `User-Agent`. |
+| `language` | The first tag of your `Accept-Language`. |
+| `ip_address` | Your proxy's exit IP. |
+
+<Aside>
+If we cannot build a payload you get a `500`, and you are not billed for it.
+</Aside>

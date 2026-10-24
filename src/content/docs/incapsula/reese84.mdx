@@ -1,0 +1,105 @@
+---
+title: reese84
+description: Solve Incapsula's reese84 challenge, including its proof of work, and get the reese84 token.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+Incapsula (Imperva) blocks with a "Pardon Our Interruption" page until the browser solves the `reese84` challenge. You
+fetch the challenge script, send it to us, and post the solution we return to the site, which answers with the `reese84`
+token.
+
+Read [Match a real browser](/start/fingerprinting/) first.
+
+<Steps>
+
+1. Find the reese84 endpoint on the block page.
+2. Fetch the challenge script.
+3. If the site uses a proof of work, fetch that challenge too.
+4. Get a solution from us (`POST /reese84`).
+5. Post the solution to the reese84 endpoint and store the token.
+
+</Steps>
+
+## 1. Find the reese84 endpoint
+
+The block page's title is "Pardon Our Interruption". It adds a script with a long, random-looking path:
+
+```js
+if (!isSpa) {
+  var scriptElement = document.createElement('script');
+  scriptElement.src = "/Exeunt-the-To-plucke-own-what-withathe-now-Busin/QY0pUGn0a7n3HCKOzYTo-83x_qJnyPzHCCgdxrW1H2g?d=join.pokemon.com";
+  document.head.appendChild(scriptElement);
+}
+```
+
+That `src`, on the site's host, is the reese84 endpoint. Here it is
+`https://join.pokemon.com/Exeunt-the-To-plucke-own-what-withathe-now-Busin/QY0pUGn0a7n3HCKOzYTo-83x_qJnyPzHCCgdxrW1H2g?d=join.pokemon.com`.
+It differs per site, so read it from the page.
+
+## 2. Fetch the challenge script
+
+GET the reese84 endpoint and Base64-encode the response body.
+
+## 3. Fetch the proof of work, if the site uses one
+
+Some sites add a proof of work. You can tell because the page's script POSTs `{"f":"gpc"}` to the reese84 endpoint. If
+you see that in a real browser's traffic, make the same request yourself, from the same session:
+
+```http
+POST /Exeunt-the-To-plucke-own-what-withathe-now-Busin/QY0pUGn0a7n3HCKOzYTo-83x_qJnyPzHCCgdxrW1H2g?d=join.pokemon.com HTTP/2
+host: join.pokemon.com
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36
+accept: application/json; charset=utf-8
+content-type: text/plain; charset=utf-8
+sec-ch-ua: "Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"
+sec-ch-ua-mobile: ?0
+sec-ch-ua-platform: "Windows"
+origin: https://join.pokemon.com
+sec-fetch-site: same-origin
+sec-fetch-mode: cors
+sec-fetch-dest: empty
+referer: https://join.pokemon.com/
+accept-language: en-GB,en-US;q=0.9,en;q=0.8
+
+{"f":"gpc"}
+```
+
+The body goes as `text/plain`, not JSON. The response is a Base64 string: that is the `pow` you send us, unchanged.
+Fetch a new one for every solve.
+
+## 4. Get a solution from us
+
+```bash
+curl -X POST https://incap.antibotapi.com/reese84 \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "page_url": "https://join.pokemon.com/",
+    "incapsula_url": "https://join.pokemon.com/Exeunt-the-To-plucke-own-what-withathe-now-Busin/QY0pUGn0a7n3HCKOzYTo-83x_qJnyPzHCCgdxrW1H2g?d=join.pokemon.com",
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+    "script_b64": "<base64 of the reese84 script>",
+    "pow": "<the gpc response, only if the site uses one>"
+  }'
+```
+
+| Field | What to send |
+| --- | --- |
+| `page_url` | The page that served the challenge. |
+| `incapsula_url` | The reese84 endpoint from step 1. |
+| `user_agent` | Your session's `User-Agent`. |
+| `script_b64` | The script from step 2, Base64. |
+| `pow` | The proof-of-work challenge from step 3. Leave it out when the site has none. |
+
+You get back `reese84Payload`, plus the `userAgent` and `sec_ch_ua` it was built for. All fields are in the
+[API reference](/api/incapsula/).
+
+## 5. Post the solution and store the token
+
+POST `reese84Payload` as JSON to the reese84 endpoint. The site answers with a `token`. That token is the `reese84`
+cookie: add it to your jar for the site and retry the blocked request.
+
+<Aside>
+When the site uses a proof of work, wait a random 1–2 seconds before posting the solution. Keep the same proxy, session
+and user agent across the whole flow.
+</Aside>

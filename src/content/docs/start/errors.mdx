@@ -1,0 +1,57 @@
+---
+title: Errors and billing
+description: What each status code means, the error bodies, and what you pay for.
+---
+
+## Status codes
+
+| Status | Meaning | What to do |
+| --- | --- | --- |
+| `200` | Solved. | Submit what you got back. |
+| `400` | Something in your request is wrong. The message says what. | Fix the request. |
+| `401` | The API key is missing, unknown, revoked or out of balance, or its signature is wrong. | Check the key and your balance. |
+| `403` | The site is not approved for your account. | Request it from the dashboard. |
+| `409` | Ticketmaster only: the anchor page is from a reCAPTCHA release we do not support yet. | Fetch the anchor with the version from `GET /config`. |
+| `413` | Kasada only: the body is over 32 MB. | Send only the `ips.js` you fetched. |
+| `429` | Too many requests. | Wait for `Retry-After` seconds. |
+| `500` | Something failed on our side. | Retry once. |
+| `501` | Ticketmaster only: this anchor asks for something we cannot build yet. | Tell us. |
+| `502` | Kasada only: the script could not be solved, usually because it is stale. | Fetch a fresh `ips.js` and retry. |
+| `503` | Temporarily unavailable. | Retry after a few seconds. |
+
+Check the HTTP status first. Not every response body has a `success` field.
+
+## Error bodies
+
+Kasada, Ticketmaster and key errors on Incapsula:
+
+```json
+{ "success": false, "error": { "type": "validation", "message": "x-api-key is required" } }
+```
+
+DataDome and Incapsula utmvc:
+
+```json
+{ "success": false, "error": "site is not whitelisted for this service" }
+```
+
+Incapsula reese84 and Amazon metadata1:
+
+```json
+{ "success": false, "message": "Error explaining what went wrong" }
+```
+
+## Billing
+
+You pay for a request only when it answers `200`. Refused and failed requests cost nothing.
+
+| Product | Billed | Free |
+| --- | --- | --- |
+| DataDome | `/interstitial`, `/captcha`, `/tags` | `/get-ip` |
+| Incapsula | `/reese84`, `/utmvc` | |
+| Kasada | `/tl` | `/cd` |
+| Ticketmaster | `/tmpt` | `/config` |
+| Amazon | `/metadata1` | |
+
+A request is taken from the key's plan first. When the plan runs out it is charged to your PAYG wallet, if PAYG is on for
+that key. Amazon metadata1 is plan-only: its keys stop when the plan is used up.

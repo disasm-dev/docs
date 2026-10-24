@@ -1,0 +1,371 @@
+openapi: 3.0.3
+info:
+  title: DataDome
+  version: 2.0.0
+  description: |
+    Solves DataDome's interstitial ("Verifying your device"), slider and audio CAPTCHA, and builds tags (`ch`/`le`)
+    payloads. You submit what we return from your own session to get the `datadome` cookie.
+
+    Each `200` from `/interstitial`, `/captcha` and `/tags` is billed. Only approved sites are accepted. See the
+    [DataDome guide](/datadome/overview/).
+servers:
+  - url: https://dd.antibotapi.com
+    description: Production
+security:
+  - ApiKey: []
+tags:
+  - name: datadome
+paths:
+  /interstitial:
+    post:
+      tags: [datadome]
+      operationId: solveInterstitial
+      summary: Solve the interstitial
+      description: |
+        Send the device-check page. Returns the form body to POST to `https://geo.captcha-delivery.com/interstitial/`
+        and the client-hint headers to use for the rest of the session.
+
+        When the page loads its challenge script from `https://ct.captcha-delivery.com/interstitial.<ver>.js` rather
+        than inline, also send that script as `device_check_script`.
+      parameters:
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InterstitialRequest'
+            example:
+              device_check_link: https://geo.captcha-delivery.com/interstitial/?initialCid=...&hash=...&cid=...&referer=...&s=2906&e=...&b=1362300&dm=cd
+              device_check_page: <base64 of the device-check page>
+              user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36
+              language: en-GB
+              ip_address: 203.0.113.7
+      responses:
+        '200':
+          description: Solved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InterstitialResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotApproved'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /captcha:
+    post:
+      tags: [datadome]
+      operationId: solveCaptcha
+      summary: Solve the slider or audio CAPTCHA
+      description: |
+        Send the CAPTCHA page and its challenge. Returns the URL to GET to submit the solution, and the client-hint
+        headers to use for the rest of the session.
+
+        For the slider, set `type` to `image` and send `background_image` and `fragment_image` (leave both out when the
+        page has no puzzle). For audio, set `type` to `audio` and send `audio_challenge`. When the page loads its
+        challenge script from `https://ct.captcha-delivery.com/captcha.<ver>.js`, also send it as `captcha_script`.
+      parameters:
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptchaRequest'
+            example:
+              type: image
+              captcha_link: https://geo.captcha-delivery.com/captcha/?initialCid=...&hash=...&cid=...&t=fe&referer=...&s=43337&e=...&dm=cd
+              html: <base64 of the captcha page>
+              background_image: <base64 of the .jpg>
+              fragment_image: <base64 of the .frag.png>
+              user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36
+              ip_address: 203.0.113.7
+      responses:
+        '200':
+          description: Solved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptchaResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotApproved'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /tags:
+    post:
+      tags: [datadome]
+      operationId: buildTags
+      summary: Build a tags payload
+      description: |
+        Builds the `tags.js` payload. Call it with `type: ch` first, submit that payload, then call it with `type: le`
+        using the `datadome` cookie the `ch` submission returned.
+      parameters:
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagsRequest'
+            example:
+              type: ch
+              cid: <your current datadome cookie>
+              site_key: <the site's ddk>
+              referer: https://www.example.com/product/123
+              user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36
+              language: en-GB
+              ip_address: 203.0.113.7
+      responses:
+        '200':
+          description: Payload built.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotApproved'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /get-ip:
+    get:
+      tags: [datadome]
+      operationId: getIp
+      summary: Check your IP and timezone
+      description: |
+        Returns the IP the request came from and its timezone. Call it through your proxy to see the IP to send as
+        `ip_address`, and to pick a matching `Accept-Language`. No API key needed; not billed.
+      security: []
+      responses:
+        '200':
+          description: Resolved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IpResponse'
+              example:
+                success: true
+                ip: 203.0.113.7
+                timezone: Europe/London
+        '500':
+          description: No timezone is known for this IP.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Your API key from the [dashboard](https://dashboard.disasm.dev).
+  parameters:
+    Signature:
+      name: x-signature
+      in: header
+      required: false
+      description: A request signature. Required only when signing is on for your key. See [Authentication](/start/authentication/).
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: The request is invalid, or the solve failed for a reason you can fix. `error` says why. Not billed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: The API key is missing, unknown, revoked or out of balance.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            error: x-api-key is required
+    NotApproved:
+      description: The site is not approved for your account. Request it from the dashboard.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            error: site is not whitelisted for this service
+    ServerError:
+      description: Something failed on our side. Retry once. Not billed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    InterstitialRequest:
+      type: object
+      required: [device_check_link, device_check_page]
+      properties:
+        device_check_link:
+          type: string
+          description: The device-check URL built from the block.
+        device_check_page:
+          type: string
+          format: byte
+          description: The device-check page, Base64-encoded.
+        device_check_script:
+          type: string
+          format: byte
+          description: |
+            The challenge script from `https://ct.captcha-delivery.com/interstitial.<ver>.js`, Base64-encoded. Only
+            needed when the page loads it with `<script src>`.
+        user_agent:
+          type: string
+          description: The `User-Agent` for the session. Chrome on Windows. Defaults to the latest stable Chrome.
+        language:
+          type: string
+          default: en-GB
+          description: The first tag of your `Accept-Language` header.
+        ip_address:
+          type: string
+          description: Your proxy's exit IP. Sets the payload's timezone. Defaults to `Europe/London`.
+    InterstitialResponse:
+      type: object
+      required: [success, payload, headers]
+      properties:
+        success:
+          type: boolean
+        payload:
+          type: string
+          description: The form body to POST to `https://geo.captcha-delivery.com/interstitial/`, unchanged.
+        headers:
+          $ref: '#/components/schemas/Headers'
+    CaptchaRequest:
+      type: object
+      required: [type, captcha_link, html]
+      properties:
+        type:
+          type: string
+          enum: [image, audio]
+          description: '`image` for the slider, `audio` for the audio challenge.'
+        captcha_link:
+          type: string
+          description: The CAPTCHA URL built from the block.
+        html:
+          type: string
+          format: byte
+          description: The CAPTCHA page, Base64-encoded.
+        captcha_script:
+          type: string
+          format: byte
+          description: |
+            The challenge script from `https://ct.captcha-delivery.com/captcha.<ver>.js`, Base64-encoded. Only needed
+            when the page loads it with `<script src>`.
+        background_image:
+          type: string
+          format: byte
+          description: The puzzle background (`.jpg`), Base64. `image` only, and only when the page has a puzzle.
+        fragment_image:
+          type: string
+          format: byte
+          description: The puzzle piece (`.frag.png`), Base64. `image` only, and only when the page has a puzzle.
+        audio_challenge:
+          type: string
+          format: byte
+          description: The audio challenge (WAV), Base64. Required when `type` is `audio`.
+        user_agent:
+          type: string
+          description: The `User-Agent` for the session. Chrome on Windows. Defaults to the latest stable Chrome.
+        language:
+          type: string
+          default: en-GB
+          description: The first tag of your `Accept-Language` header.
+        ip_address:
+          type: string
+          description: Your proxy's exit IP. Sets the payload's timezone. Defaults to `Europe/London`.
+    CaptchaResponse:
+      type: object
+      required: [success, captcha_submit_url, payload, headers]
+      properties:
+        success:
+          type: boolean
+        captcha_submit_url:
+          type: string
+          description: The URL to GET to submit the solution.
+        payload:
+          type: string
+          description: The solution query string, already part of `captcha_submit_url`.
+        headers:
+          $ref: '#/components/schemas/Headers'
+    TagsRequest:
+      type: object
+      required: [type, cid, site_key, referer, user_agent, language, ip_address]
+      properties:
+        type:
+          type: string
+          enum: [ch, le]
+          description: '`ch` first, then `le`.'
+        cid:
+          type: string
+          description: Your current `datadome` cookie. For `le`, the cookie the `ch` submission returned.
+        site_key:
+          type: string
+          description: The site's DataDome key (`ddk`).
+        referer:
+          type: string
+          description: The last URL visited, not percent-encoded.
+        user_agent:
+          type: string
+          description: The `User-Agent` for the session.
+        language:
+          type: string
+          description: The first tag of your `Accept-Language` header.
+        ip_address:
+          type: string
+          description: Your proxy's exit IP. Sets the payload's timezone.
+    TagsResponse:
+      type: object
+      required: [success, payload]
+      properties:
+        success:
+          type: boolean
+        payload:
+          type: string
+          description: The form body to POST to the site's tags endpoint (usually the URL ending in `/js/`), unchanged.
+    Headers:
+      type: object
+      additionalProperties:
+        type: string
+      description: |
+        Client hints (`sec-ch-ua`, `sec-ch-ua-full-version-list` and others) to send, exactly as given, on your requests
+        for the rest of the session. The payload was built to match them.
+    IpResponse:
+      type: object
+      required: [success, ip, timezone]
+      properties:
+        success:
+          type: boolean
+        ip:
+          type: string
+        timezone:
+          type: string
+          description: The IANA timezone for the IP.
+    Error:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          description: What went wrong.

@@ -1,0 +1,119 @@
+openapi: 3.0.3
+info:
+  title: Amazon metadata1
+  version: 1.0.0
+  description: |
+    Generates the `metadata1` values Amazon expects on the email and password steps of its sign-in form. Package-only:
+    keys stop when the plan is used up. See the [metadata1 guide](/amazon/metadata1/).
+servers:
+  - url: https://metadata1.antibotapi.com
+    description: Production
+security:
+  - ApiKey: []
+tags:
+  - name: metadata1
+paths:
+  /metadata1:
+    post:
+      tags: [metadata1]
+      operationId: generateMetadata1
+      summary: Generate metadata1 payloads
+      description: |
+        Send the context of the sign-in you are doing. Returns one `metadata1` value for the email step and one for the
+        password step. They are bound to `user_agent`, so send the sign-in requests with exactly that string.
+      parameters:
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Metadata1Request'
+            example:
+              user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36
+              referer: https://www.amazon.com/
+              location: https://www.amazon.com/ap/signin
+              email: user@example.com
+              password_length: 12
+      responses:
+        '200':
+          description: Payloads generated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Metadata1Response'
+              example:
+                success: true
+                metadata1:
+                  email: ECdITeCs:zr7fdAC...
+                  password: HmS1pQ9v:8xKf2u...
+        '400':
+          description: The request body is malformed. `message` says why.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: The API key is missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Your API key from the [dashboard](https://dashboard.disasm.dev).
+  parameters:
+    Signature:
+      name: x-signature
+      in: header
+      required: false
+      description: A request signature. Required only when signing is on for your key. See [Authentication](/start/authentication/).
+      schema:
+        type: string
+  schemas:
+    Metadata1Request:
+      type: object
+      required: [user_agent, email, password_length]
+      properties:
+        user_agent:
+          type: string
+          description: The `User-Agent` you will send the sign-in requests with, exactly.
+        referer:
+          type: string
+          description: The page you came to sign-in from.
+        location:
+          type: string
+          description: The URL of the sign-in page.
+        email:
+          type: string
+          description: The email address entered into the form.
+        password_length:
+          type: integer
+          description: The number of characters in the password.
+    Metadata1Response:
+      type: object
+      properties:
+        success:
+          type: boolean
+        metadata1:
+          type: object
+          properties:
+            email:
+              type: string
+              description: The `metadata1` value for the email step.
+            password:
+              type: string
+              description: The `metadata1` value for the password step.
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          description: What went wrong.

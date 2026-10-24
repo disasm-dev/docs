@@ -1,0 +1,37 @@
+---
+title: Quickstart
+description: Create an API key and make your first request.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. **Create a key.** Sign in to the [dashboard](https://dashboard.disasm.dev) and create an API key.
+
+   A **service key** comes with a plan and works on that product only. A **universal key** works on every product
+   except invite-only betas and pays from your wallet.
+
+2. **Check the key works.** Ask the Ticketmaster API for its current reCAPTCHA version. It is free.
+
+   ```bash
+   curl https://tmpt.antibotapi.com/config -H "x-api-key: YOUR_API_KEY"
+   ```
+
+   ```json
+   { "success": true, "version": "NhfdZHzre16wrc2m6BxEdu7J" }
+   ```
+
+   A `401` means the key is missing, wrong, or has no balance left.
+
+3. **Set up your HTTP client.** Your requests to the protected site must look like Chrome at the TLS and HTTP/2 level.
+   See [Match a real browser](/start/fingerprinting/).
+
+4. **Pick a guide** and follow it end to end:
+   - [DataDome](/datadome/overview/)
+   - [Incapsula reese84](/incapsula/reese84/) or [utmvc](/incapsula/utmvc/)
+   - [Kasada](/kasada/overview/)
+   - [Ticketmaster tmpt](/ticketmaster/tmpt/)
+   - [Amazon metadata1](/amazon/metadata1/)
+
+</Steps>

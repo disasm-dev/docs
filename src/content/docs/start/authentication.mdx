@@ -1,0 +1,60 @@
+---
+title: Authentication
+description: Send your API key on every request, and sign requests if your key requires it.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Send your API key in the `x-api-key` header on every request.
+
+```bash
+curl -X POST https://dd.antibotapi.com/interstitial \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "device_check_link": "...", "device_check_page": "..." }'
+```
+
+Create and manage keys in the [dashboard](https://dashboard.disasm.dev).
+
+<Aside type="caution">
+Keep the key on your server. Anyone who has it can spend your balance.
+</Aside>
+
+## Base URLs
+
+| Product | Base URL |
+| --- | --- |
+| DataDome | `https://dd.antibotapi.com` |
+| Incapsula | `https://incap.antibotapi.com` |
+| Kasada | `https://ksd.antibotapi.com` |
+| Ticketmaster tmpt | `https://tmpt.antibotapi.com` |
+| Amazon metadata1 | `https://metadata1.antibotapi.com` |
+| Developer API | `https://api.disasm.dev` |
+
+The [Developer API](/account/developer-api/) is the one exception: it takes the key as `Authorization: Bearer YOUR_API_KEY`.
+
+## Which keys work where
+
+- A **service key** works on the product its plan is for.
+- A **universal key** works on every product except invite-only betas (Kasada), and pays from your PAYG wallet.
+
+A key with no plan balance left keeps working while PAYG is on for it and your wallet has funds. Otherwise requests get
+a `401`.
+
+## Request signing
+
+You can turn on request signing for a key in the dashboard. A signed key also needs an `x-signature` header on every
+request: a JWT signed with the key's signing secret (HS256), whose `x-api-key` claim is the key itself.
+
+```js
+import jwt from 'jsonwebtoken';
+
+const signature = jwt.sign({ 'x-api-key': apiKey }, signingSecret, { algorithm: 'HS256', expiresIn: '1m' });
+
+await fetch('https://tmpt.antibotapi.com/config', {
+	headers: { 'x-api-key': apiKey, 'x-signature': signature },
+});
+```
+
+`exp` and `nbf` are checked when you set them. A missing or wrong signature is a `401`. Keys without signing ignore the
+header.

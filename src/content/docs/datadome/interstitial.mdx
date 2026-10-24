@@ -1,0 +1,242 @@
+---
+title: Interstitial
+description: Clear DataDome's "Verifying your device" page and get a datadome cookie.
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The interstitial is DataDome's "Verifying your device" page. You fetch the device-check page, send it to us, and post the
+payload we return back to DataDome for a `datadome` cookie.
+
+Read the [overview](/datadome/overview/) first.
+
+<Steps>
+
+1. Detect the block.
+2. Build the device-check URL.
+3. Fetch the device-check page.
+4. Get a payload from us (`POST /interstitial`).
+5. Post the payload to DataDome.
+6. Store the cookie and retry.
+
+</Steps>
+
+## 1. Detect the block
+
+The page answers `403` and loads `https://ct.captcha-delivery.com/i.js`. The challenge values come in one of two forms.
+Either an inline `dd` object:
+
+```html
+<script data-cfasync="false">
+  var dd = {'rt':'i','cid':'AHrlqAAAAAMA33U5jz_3dWIAH38V_A==','hsh':'4980A61279181687DE605B235F81B9','b':1362300,'s':2906,'host':'geo.captcha-delivery.com'}
+</script>
+<script data-cfasync="false" src="https://ct.captcha-delivery.com/i.js"></script>
+```
+
+Or a JSON body with the device-check URL already built:
+
+```json
+{ "url": "https://geo.captcha-delivery.com/interstitial/?initialCid=...&hash=...&dm=cd" }
+```
+
+## 2. Build the device-check URL
+
+If the body has a `url`, use it. Otherwise build the URL from the `dd` object:
+
+| Parameter | Value |
+| --- | --- |
+| `initialCid` | `dd.cid` |
+| `hash` | `dd.hsh` |
+| `cid` | Your current `datadome` cookie, or empty on the first block |
+| `referer` | The URL you were blocked on |
+| `s`, `e`, `b` | `dd.s`, `dd.e`, `dd.b` |
+| `dm` | `cd` |
+
+URL-encode every value and join them onto `https://geo.captcha-delivery.com/interstitial/?` in that order.
+
+<Tabs syncKey="lang">
+<TabItem label="Go">
+
+```go
+import (
+	"encoding/json"
+	"errors"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var ddRe = regexp.MustCompile(`(?s)var dd\s*=\s*(\{.*?\})`)
+
+type DD struct {
+	Cid string `json:"cid"`
+	Hsh string `json:"hsh"`
+	B   int64  `json:"b"`
+	E   string `json:"e"`
+	S   int64  `json:"s"`
+}
+
+// DeviceCheckLink builds the device-check URL from a block page. cookie is your
+// current datadome cookie (empty on the first block); referer is the blocked URL.
+func DeviceCheckLink(body, cookie, referer string) (string, error) {
+	if i := strings.Index(body, `"url":"https://geo.captcha-delivery.com/interstitial`); i >= 0 {
+		rest := body[i+len(`"url":"`):]
+		return rest[:strings.Index(rest, `"`)], nil
+	}
+	m := ddRe.FindStringSubmatch(body)
+	if m == nil {
+		return "", errors.New("no dd object")
+	}
+	var dd DD
+	if err := json.Unmarshal([]byte(strings.ReplaceAll(m[1], "'", `"`)), &dd); err != nil {
+		return "", err
+	}
+	params := [][2]string{
+		{"initialCid", dd.Cid}, {"hash", dd.Hsh}, {"cid", cookie}, {"referer", referer},
+		{"s", strconv.FormatInt(dd.S, 10)}, {"e", dd.E}, {"b", strconv.FormatInt(dd.B, 10)}, {"dm", "cd"},
+	}
+	parts := make([]string, len(params))
+	for i, p := range params {
+		parts[i] = p[0] + "=" + url.QueryEscape(p[1])
+	}
+	return "https://geo.captcha-delivery.com/interstitial/?" + strings.Join(parts, "&"), nil
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import json
+import re
+from urllib.parse import quote
+
+DD_RE = re.compile(r"var dd\s*=\s*(\{.*?\})", re.DOTALL)
+
+
+def device_check_link(body: str, cookie: str, referer: str) -> str:
+    """Build the device-check URL. cookie is your current datadome cookie
+    (empty on the first block); referer is the blocked URL."""
+    marker = '"url":"https://geo.captcha-delivery.com/interstitial'
+    if marker in body:
+        return body.split('"url":"', 1)[1].split('"', 1)[0]
+    match = DD_RE.search(body)
+    if not match:
+        raise ValueError("no dd object")
+    dd = json.loads(match.group(1).replace("'", '"'))
+    params = [
+        ("initialCid", dd["cid"]), ("hash", dd["hsh"]), ("cid", cookie), ("referer", referer),
+        ("s", str(dd["s"])), ("e", dd.get("e", "")), ("b", str(dd["b"])), ("dm", "cd"),
+    ]
+    return "https://geo.captcha-delivery.com/interstitial/?" + "&".join(f"{k}={quote(str(v), safe='')}" for k, v in params)
+```
+
+</TabItem>
+<TabItem label="JavaScript">
+
+```js
+// Build the device-check URL. cookie is your current datadome cookie
+// (empty on the first block); referer is the blocked URL.
+function deviceCheckLink(body, cookie, referer) {
+  const marker = '"url":"https://geo.captcha-delivery.com/interstitial';
+  if (body.includes(marker)) return body.split('"url":"')[1].split('"')[0];
+
+  const m = body.match(/var dd\s*=\s*(\{[\s\S]*?\})/);
+  if (!m) throw new Error('no dd object');
+  const dd = JSON.parse(m[1].replace(/'/g, '"'));
+  const params = [
+    ['initialCid', dd.cid], ['hash', dd.hsh], ['cid', cookie], ['referer', referer],
+    ['s', String(dd.s)], ['e', dd.e ?? ''], ['b', String(dd.b)], ['dm', 'cd'],
+  ];
+  return 'https://geo.captcha-delivery.com/interstitial/?' + params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+}
+```
+
+</TabItem>
+</Tabs>
+
+## 3. Fetch the device-check page
+
+GET the device-check URL as a browser loads an iframe: a navigation request whose `referer` is the page you were blocked
+on. Base64-encode the whole response body.
+
+If the page loads its script from `https://ct.captcha-delivery.com/interstitial.<ver>.js` instead of inline, fetch that
+script too and Base64-encode it.
+
+## 4. Get a payload from us
+
+```bash
+curl -X POST https://dd.antibotapi.com/interstitial \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_check_link": "https://geo.captcha-delivery.com/interstitial/?initialCid=...",
+    "device_check_page": "<base64 of the device-check page>",
+    "language": "en-GB",
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "ip_address": "203.0.113.7"
+  }'
+```
+
+| Field | What to send |
+| --- | --- |
+| `device_check_link` | The URL from step 2. |
+| `device_check_page` | The page from step 3, Base64. |
+| `device_check_script` | The script from step 3, Base64, when the page loads it externally. |
+| `language` | The first tag of your `Accept-Language`, such as `en-GB`. |
+| `user_agent` | Your session's `User-Agent`. |
+| `ip_address` | Your proxy's exit IP. |
+
+You get back `payload`, the form body for step 5, and `headers`, the client hints to send from now on. All fields are in
+the [API reference](/api/datadome/).
+
+<Aside type="caution">
+The `language` you send is written into the payload, and DataDome compares it with the `Accept-Language` on your later
+requests. Send the same `Accept-Language` on every request in the session, and pick one that fits your proxy's country.
+</Aside>
+
+## 5. Post the payload to DataDome
+
+POST the `payload` unchanged to `https://geo.captcha-delivery.com/interstitial/` over **HTTP/1.1**, with Chrome's headers
+in Chrome's order:
+
+```http
+POST /interstitial/ HTTP/1.1
+Host: geo.captcha-delivery.com
+sec-ch-ua-platform: "Windows"
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36
+sec-ch-ua: "Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"
+content-type: application/x-www-form-urlencoded; charset=UTF-8
+sec-ch-ua-mobile: ?0
+accept: */*
+origin: https://geo.captcha-delivery.com
+sec-fetch-site: same-origin
+sec-fetch-mode: cors
+sec-fetch-dest: empty
+sec-fetch-storage-access: none
+referer: <the device-check URL>
+accept-encoding: gzip, deflate, br, zstd
+accept-language: en-GB,en;q=0.9
+```
+
+A pass looks like this:
+
+```json
+{ "cookie": "datadome=...; Max-Age=31536000; Domain=.example.com; Path=/; Secure; SameSite=Lax", "view": "redirect", "url": "https://www.example.com/" }
+```
+
+## 6. Store the cookie and retry
+
+Store the `datadome` value from `cookie` for the site, replacing the old one. If `view` is `redirect`, go to `url`;
+otherwise retry the request that was blocked.
+
+### If `view` is `captcha`
+
+DataDome did not accept the session and escalated to a CAPTCHA. Check, in this order:
+
+- Your `Accept-Language` matches the `language` you sent.
+- Your TLS fingerprint and header order match Chrome.
+- Your `referer` headers follow your real navigation.
+
+Fix the cause and start again from step 1. To solve the CAPTCHA instead, follow [Slider CAPTCHA](/datadome/captcha/).

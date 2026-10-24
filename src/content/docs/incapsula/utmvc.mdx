@@ -1,0 +1,53 @@
+---
+title: utmvc
+description: Solve Incapsula's legacy utmvc challenge and get the ___utmvc cookie.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+utmvc is Incapsula's older challenge. Most sites no longer use it, but some still do.
+
+## Do you need it?
+
+You need it when the blocked page is almost empty and loads an `_Incapsula_Resource` script:
+
+```html
+<html>
+<head>
+<META NAME="robots" CONTENT="noindex,nofollow">
+<script src="/_Incapsula_Resource?SWJIYLWA=5074a744e2e3d891814e9a2dace20bd4,719d34d31c8e3a6e6fffd425f7e032f3"></script>
+<body></body></html>
+```
+
+## Solve
+
+<Steps>
+
+1. GET the script `src` from the page. It differs per site, so read it from the page.
+
+2. Base64-encode the script and send it to us, with the values of your `incap_ses_*` cookies:
+
+   ```bash
+   curl -X POST https://incap.antibotapi.com/utmvc \
+     -H "x-api-key: YOUR_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "script": "<base64 of the script>",
+       "session_cookies": ["<value of each incap_ses_* cookie>"]
+     }'
+   ```
+
+   You get back `___utmvc` and `SWHANEDL`.
+
+3. If `SWHANEDL` is not empty, GET `/_Incapsula_Resource?SWHANEDL=<SWHANEDL>` on the site.
+
+4. Add the `___utmvc` cookie to your jar.
+
+5. GET `/_Incapsula_Resource?SWKMTFSR=1&e=<random>`, where `<random>` is a random number between 0 and 1 with 15
+   decimal places (what `Math.random()` gives). A body of `1` means the cookie was accepted.
+
+6. Retry the blocked request.
+
+</Steps>
+
+All fields are in the [API reference](/api/incapsula/).

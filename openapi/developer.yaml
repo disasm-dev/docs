@@ -1,0 +1,565 @@
+openapi: 3.0.3
+info:
+  title: Developer API
+  version: 1.0.0
+  description: 'Manage your account from code: profile, balances, API keys and usage. Authenticate with your API key as a
+    Bearer token (`Authorization: Bearer <key>`), not `x-api-key`. Limited to 60 requests a minute. See the [Developer API
+    guide](/account/developer-api/).'
+servers:
+- url: https://api.disasm.dev
+  description: Production
+security:
+- BearerAuth: []
+tags:
+- name: Account
+  description: Your profile, balances and subscriptions.
+- name: API Keys
+  description: List, inspect and rotate your API keys.
+- name: Usage
+  description: Request usage statistics and time-series data.
+paths:
+  /v1/me:
+    get:
+      tags:
+      - Account
+      operationId: getMe
+      summary: Get your profile
+      description: Returns your user profile, PAYG balance, and a summary of active subscriptions.
+      responses:
+        '200':
+          description: Your profile.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/X-RateLimit-Reset'
+            X-Balance-Remaining:
+              $ref: '#/components/headers/X-Balance-Remaining'
+            X-PAYG-Balance:
+              $ref: '#/components/headers/X-PAYG-Balance'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              example:
+                id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                email: user@example.com
+                username: myuser
+                payg_balance_pence: 4500
+                subscriptions:
+                - id: sub_abc123
+                  status: active
+                  plan_name: Incapsula Pro
+                  service_name: Incapsula
+                  is_trial: false
+                  expires_at: '2026-05-14T00:00:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/balance:
+    get:
+      tags:
+      - Account
+      operationId: getBalance
+      summary: Check your balance
+      description: Quick balance check. Returns your PAYG wallet balance and per-key subscription request balances.
+      responses:
+        '200':
+          description: Balance summary.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/X-RateLimit-Reset'
+            X-Balance-Remaining:
+              $ref: '#/components/headers/X-Balance-Remaining'
+            X-PAYG-Balance:
+              $ref: '#/components/headers/X-PAYG-Balance'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalanceResponse'
+              example:
+                payg_balance_pence: 4500
+                total_request_balance: 8250
+                keys:
+                - id: key-uuid-1
+                  label: Incapsula
+                  key_hint: dk_live_****abcd
+                  request_balance: 5000
+                  service_id: 1
+                - id: key-uuid-2
+                  label: DataDome
+                  key_hint: dk_live_****efgh
+                  request_balance: 3250
+                  service_id: 2
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/keys:
+    get:
+      tags:
+      - API Keys
+      operationId: listKeys
+      summary: List API keys
+      description: List all your API keys with their current status, balance, and usage stats.
+      responses:
+        '200':
+          description: Your API keys.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/X-RateLimit-Reset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyListResponse'
+              example:
+                keys:
+                - id: key-uuid-1
+                  service_id: 1
+                  service_name: Incapsula
+                  key_hint: dk_live_****abcd
+                  label: Production
+                  status: active
+                  request_balance: 5000
+                  requests_used: 12400
+                  payg_overflow: true
+                  last_used_at: '2026-04-14T12:30:00Z'
+                  created_at: '2026-01-15T09:00:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/keys/{id}:
+    get:
+      tags:
+      - API Keys
+      operationId: getKey
+      summary: Get an API key
+      description: Get details for a specific API key including balance, usage, and service info.
+      parameters:
+      - $ref: '#/components/parameters/KeyIdPath'
+      responses:
+        '200':
+          description: The API key.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/X-RateLimit-Reset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKey'
+              example:
+                id: key-uuid-1
+                service_id: 1
+                service_name: Incapsula
+                key_hint: dk_live_****abcd
+                label: Production
+                status: active
+                request_balance: 5000
+                requests_used: 12400
+                payg_overflow: true
+                last_used_at: '2026-04-14T12:30:00Z'
+                created_at: '2026-01-15T09:00:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/keys/{id}/rotate:
+    post:
+      tags:
+      - API Keys
+      operationId: rotateKey
+      summary: Rotate an API key
+      description: Replaces the key. The old key stops working at once. The new key is returned once only, so store it.
+      parameters:
+      - $ref: '#/components/parameters/KeyIdPath'
+      responses:
+        '200':
+          description: The key was rotated. The new plaintext key is returned once.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/X-RateLimit-Reset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotateResponse'
+              example:
+                key:
+                  id: new-key-uuid
+                  key_hint: dk_live_****wxyz
+                  label: Production
+                  status: active
+                  request_balance: 5000
+                plaintext: dk_live_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345
+                message: Key rotated successfully. Save the new key; it will not be shown again.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/usage:
+    get:
+      tags:
+      - Usage
+      operationId: getUsage
+      summary: Get usage statistics
+      description: Get usage statistics with time-series chart data. Supports filtering by time period and API key.
+      parameters:
+      - $ref: '#/components/parameters/PeriodQuery'
+      - $ref: '#/components/parameters/KeyIdQuery'
+      responses:
+        '200':
+          description: Usage statistics for the requested period.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/X-RateLimit-Reset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageResponse'
+              example:
+                period: 7d
+                overview:
+                  today: 1250
+                  this_week: 8400
+                  this_month: 32100
+                  total: 145600
+                chart:
+                - time: '2026-04-08T00:00:00Z'
+                  requests: 1200
+                - time: '2026-04-09T00:00:00Z'
+                  requests: 1350
+                - time: '2026-04-10T00:00:00Z'
+                  requests: 980
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: 'Your API key as a Bearer token: `Authorization: Bearer <key>`.'
+  parameters:
+    KeyIdPath:
+      name: id
+      in: path
+      required: true
+      description: The API key ID (UUID).
+      schema:
+        type: string
+        format: uuid
+    PeriodQuery:
+      name: period
+      in: query
+      required: false
+      description: Time period to report on.
+      schema:
+        type: string
+        enum:
+        - 24h
+        - 7d
+        - 30d
+        - 90d
+        default: 7d
+    KeyIdQuery:
+      name: key_id
+      in: query
+      required: false
+      description: Filter usage to a specific API key ID.
+      schema:
+        type: string
+        format: uuid
+  headers:
+    X-RateLimit-Limit:
+      description: Maximum requests per minute (60).
+      schema:
+        type: integer
+        example: 60
+    X-RateLimit-Remaining:
+      description: Requests remaining in the current window.
+      schema:
+        type: integer
+        example: 59
+    X-RateLimit-Reset:
+      description: Unix timestamp when the rate limit resets.
+      schema:
+        type: integer
+        example: 1718000000
+    X-Balance-Remaining:
+      description: Total subscription request balance across all keys.
+      schema:
+        type: integer
+        example: 8250
+    X-PAYG-Balance:
+      description: PAYG wallet balance in pence.
+      schema:
+        type: integer
+        example: 4500
+  responses:
+    Unauthorized:
+      description: Missing or invalid API key.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Missing or invalid API key
+    NotFound:
+      description: The requested resource does not exist or does not belong to you.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: API key not found
+    RateLimited:
+      description: Rate limit exceeded. See the `X-RateLimit-*` response headers.
+      headers:
+        X-RateLimit-Limit:
+          $ref: '#/components/headers/X-RateLimit-Limit'
+        X-RateLimit-Remaining:
+          $ref: '#/components/headers/X-RateLimit-Remaining'
+        X-RateLimit-Reset:
+          $ref: '#/components/headers/X-RateLimit-Reset'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Rate limit exceeded
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: A human-readable message describing what went wrong.
+    Subscription:
+      type: object
+      properties:
+        id:
+          type: string
+          example: sub_abc123
+        status:
+          type: string
+          description: Subscription state, e.g. `active`, `trialing`, `canceled`.
+          example: active
+        plan_name:
+          type: string
+          example: Incapsula Pro
+        service_name:
+          type: string
+          example: Incapsula
+        is_trial:
+          type: boolean
+          example: false
+        expires_at:
+          type: string
+          format: date-time
+          example: '2026-05-14T00:00:00Z'
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        username:
+          type: string
+          example: myuser
+        payg_balance_pence:
+          type: integer
+          description: Pay-as-you-go wallet balance, in pence.
+          example: 4500
+        subscriptions:
+          type: array
+          description: Active subscriptions on the account.
+          items:
+            $ref: '#/components/schemas/Subscription'
+    BalanceKey:
+      type: object
+      properties:
+        id:
+          type: string
+          example: key-uuid-1
+        label:
+          type: string
+          example: Incapsula
+        key_hint:
+          type: string
+          description: Masked key, for identification only.
+          example: dk_live_****abcd
+        request_balance:
+          type: integer
+          description: Subscription requests remaining on this key.
+          example: 5000
+        service_id:
+          type: integer
+          example: 1
+    BalanceResponse:
+      type: object
+      properties:
+        payg_balance_pence:
+          type: integer
+          description: Pay-as-you-go wallet balance, in pence.
+          example: 4500
+        total_request_balance:
+          type: integer
+          description: Total subscription requests remaining across all keys.
+          example: 8250
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/BalanceKey'
+    ApiKey:
+      type: object
+      properties:
+        id:
+          type: string
+          example: key-uuid-1
+        service_id:
+          type: integer
+          example: 1
+        service_name:
+          type: string
+          example: Incapsula
+        key_hint:
+          type: string
+          description: Masked key, for identification only.
+          example: dk_live_****abcd
+        label:
+          type: string
+          example: Production
+        status:
+          type: string
+          description: Key state, e.g. `active`, `revoked`.
+          example: active
+        request_balance:
+          type: integer
+          description: Subscription requests remaining on this key.
+          example: 5000
+        requests_used:
+          type: integer
+          description: Total requests made with this key.
+          example: 12400
+        payg_overflow:
+          type: boolean
+          description: Whether requests beyond the subscription balance draw from the PAYG wallet.
+          example: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-04-14T12:30:00Z'
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-01-15T09:00:00Z'
+    KeyListResponse:
+      type: object
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiKey'
+    RotatedKey:
+      type: object
+      properties:
+        id:
+          type: string
+          example: new-key-uuid
+        key_hint:
+          type: string
+          example: dk_live_****wxyz
+        label:
+          type: string
+          example: Production
+        status:
+          type: string
+          example: active
+        request_balance:
+          type: integer
+          example: 5000
+    RotateResponse:
+      type: object
+      properties:
+        key:
+          $ref: '#/components/schemas/RotatedKey'
+        plaintext:
+          type: string
+          description: The new key. Returned once only.
+          example: dk_live_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345
+        message:
+          type: string
+          example: Key rotated successfully. Save the new key; it will not be shown again.
+    UsageOverview:
+      type: object
+      properties:
+        today:
+          type: integer
+          example: 1250
+        this_week:
+          type: integer
+          example: 8400
+        this_month:
+          type: integer
+          example: 32100
+        total:
+          type: integer
+          example: 145600
+    UsagePoint:
+      type: object
+      properties:
+        time:
+          type: string
+          format: date-time
+          example: '2026-04-08T00:00:00Z'
+        requests:
+          type: integer
+          example: 1200
+    UsageResponse:
+      type: object
+      properties:
+        period:
+          type: string
+          description: The time period this data covers.
+          example: 7d
+        overview:
+          $ref: '#/components/schemas/UsageOverview'
+        chart:
+          type: array
+          description: Time-series request counts for the period.
+          items:
+            $ref: '#/components/schemas/UsagePoint'

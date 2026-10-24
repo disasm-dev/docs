@@ -1,0 +1,69 @@
+---
+title: DataDome overview
+sidebar:
+  label: Overview
+description: How the DataDome API works, and the session rules that decide whether a cookie is accepted.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Read this before any DataDome guide. Most rejected cookies come from the session, not the payload.
+
+## How it works
+
+- **We return payloads, not cookies.** You submit the payload from your session and DataDome sets the `datadome` cookie.
+- **Synchronous.** A solve takes about 50–100 ms.
+- **Chrome on Windows only.** Your client must match. See [Match a real browser](/start/fingerprinting/).
+- **Kept up to date.** When DataDome changes, we update the solver. You do not need to do anything.
+
+Base URL: `https://dd.antibotapi.com`. Only sites approved for your account are accepted; request one from the
+dashboard.
+
+## Which challenge you have
+
+| You see | Challenge | Guide |
+| --- | --- | --- |
+| A `403` whose page loads `ct.captcha-delivery.com/i.js` | "Verifying your device" | [Interstitial](/datadome/interstitial/) |
+| A `403` whose page loads `ct.captcha-delivery.com/c.js` | Slider or audio | [Slider CAPTCHA](/datadome/captcha/) |
+| No block page, but blocks later in the flow | Device signals | [Tags](/datadome/tags/) |
+
+## Session rules
+
+### Browse like a person
+
+Move through the site the way a user would: homepage, then product page, then add to cart. Never send a request the UI
+could not have made. Each request's `referer` is the page before it.
+
+### Send the client hints DataDome asks for
+
+Chrome sends three client hints on every HTTPS request, and your client must too:
+
+- `sec-ch-ua`, the brand list, such as `"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"`
+- `sec-ch-ua-mobile: ?0`
+- `sec-ch-ua-platform: "Windows"`
+
+When a response has an `Accept-CH` header, the site wants more hints on later requests to that origin:
+
+```
+Accept-CH: Sec-CH-UA-Platform-Version, Sec-CH-UA-Full-Version-List, Sec-CH-UA-Arch, Sec-CH-UA-Bitness, Sec-CH-UA-Model
+```
+
+Send every hint it names from then on. Our solve responses include a `headers` map with these values; send them as given
+and keep them the same for the whole session. Every hint must agree with your `User-Agent`: same Chrome version,
+`"Windows"` as the platform.
+
+### `t=bv` does not always mean a banned proxy
+
+The `t` value in the block's `dd` object is `bv` both for a banned proxy and for a session that has not solved
+[tags](/datadome/tags/) yet. Solve tags before rotating proxies. If `t=bv` stays after tags, or the CAPTCHA page contains
+`Hard Block`, the proxy is banned.
+
+### Start clean when you loop
+
+If you keep getting blocked after solving, clear every DataDome cookie, request the page again for a fresh block, and
+solve from the start. An invalidated cookie keeps you in the loop.
+
+<Aside>
+Use [`GET /get-ip`](/api/datadome/) through your proxy to see the IP and timezone we resolve for it. Pass that IP as
+`ip_address` and choose an `Accept-Language` that fits the location.
+</Aside>

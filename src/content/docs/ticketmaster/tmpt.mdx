@@ -1,0 +1,523 @@
+---
+title: Ticketmaster tmpt
+sidebar:
+  label: tmpt
+description: Get Ticketmaster's tmpt cookie by passing its reCAPTCHA Enterprise check on page view.
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Ticketmaster runs a reCAPTCHA Enterprise check when a page loads and sets the `tmpt` cookie when it passes. Sign-in and
+other protected actions expect a session that has `tmpt`.
+
+We build the reCAPTCHA reload request. You make every request to Ticketmaster and Google yourself, from one session.
+
+Base URL: `https://tmpt.antibotapi.com`
+
+## Before you start
+
+- **User agent:** Chrome 145–155 on Windows, the same string on every request.
+- **One session:** the same proxy, cookie jar and `Accept-Language` from the homepage to `tmpt`.
+- **A Chrome-like client:** see [Match a real browser](/start/fingerprinting/).
+
+<Steps>
+
+1. Get the reCAPTCHA version from us (`GET /config`).
+2. Open Ticketmaster's homepage.
+3. Fetch the reCAPTCHA anchor page from Google.
+4. Wait at least 200 ms, then get the reload request from us (`POST /tmpt`).
+5. Post the reload request to Google and read the token.
+6. Send the token to Ticketmaster and store `tmpt`.
+
+</Steps>
+
+## 1. Get the version
+
+```bash
+curl https://tmpt.antibotapi.com/config -H "x-api-key: YOUR_API_KEY"
+```
+
+```json
+{ "success": true, "version": "NhfdZHzre16wrc2m6BxEdu7J" }
+```
+
+`version` is the reCAPTCHA release to fetch the anchor with. It changes when Google ships a release, so read it for each
+session. This call is free.
+
+## 2. Open the homepage
+
+1. GET `https://www.ticketmaster.com/` as a page navigation.
+2. GET `https://www.ticketmaster.com/eps-mgr` as the page's script request, with `referer: https://www.ticketmaster.com/`.
+3. Keep every cookie both responses set. You need `SID`, `BID` and `eps_sid` in step 6.
+4. If the homepage answers `403`, Ticketmaster has blocked your proxy. Switch proxy and start again.
+
+## 3. Fetch the anchor page
+
+GET `https://www.google.com/recaptcha/enterprise/anchor` as the page's reCAPTCHA iframe would, with these query
+parameters in this order:
+
+| Parameter | Value |
+| --- | --- |
+| `ar` | `1` |
+| `k` | `6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV`, Ticketmaster's site key |
+| `co` | `aHR0cHM6Ly93d3cudGlja2V0bWFzdGVyLmNvbTo0NDM.`, the page's origin `https://www.ticketmaster.com:443` in Base64, with `.` for the `=` padding |
+| `hl` | `en` |
+| `v` | The `version` from step 1 |
+| `size` | `invisible` |
+| `anchor-ms` | `20000` |
+| `execute-ms` | `30000` |
+| `ovv` | `CADq00gF` |
+| `cb` | A fresh random string for each fetch (see below) |
+
+Put together, with `VERSION` and `CB` filled in:
+
+```
+https://www.google.com/recaptcha/enterprise/anchor?ar=1&k=6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV&co=aHR0cHM6Ly93d3cudGlja2V0bWFzdGVyLmNvbTo0NDM.&hl=en&v=VERSION&size=invisible&anchor-ms=20000&execute-ms=30000&ovv=CADq00gF&cb=CB
+```
+
+`cb` is two random numbers written in base 36, the second mixed with the current time:
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js
+function makeCb() {
+  return Math.floor(Math.random() * 2147483648).toString(36)
+    + Math.abs(Math.floor(Math.random() * 2147483648) ^ Date.now()).toString(36);
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import random
+import time
+
+DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+def _int32(n: int) -> int:
+    n &= 0xFFFFFFFF
+    return n - (1 << 32) if n >= (1 << 31) else n
+
+
+def _base36(n: int) -> str:
+    out = ""
+    while True:
+        n, digit = divmod(n, 36)
+        out = DIGITS[digit] + out
+        if n == 0:
+            return out
+
+
+def make_cb() -> str:
+    first = random.randrange(2147483648)
+    second = abs(_int32(random.randrange(2147483648) ^ _int32(int(time.time() * 1000))))
+    return _base36(first) + _base36(second)
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+import (
+	"math/rand"
+	"strconv"
+	"time"
+)
+
+func MakeCb() string {
+	first := rand.Int63n(2147483648)
+	second := int64(int32(rand.Int63n(2147483648)) ^ int32(time.Now().UnixMilli()))
+	if second < 0 {
+		second = -second
+	}
+	return strconv.FormatInt(first, 36) + strconv.FormatInt(second, 36)
+}
+```
+
+</TabItem>
+</Tabs>
+
+```http
+GET /recaptcha/enterprise/anchor?ar=1&k=6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV&co=...&v=VERSION&...&cb=CB HTTP/2
+host: www.google.com
+sec-ch-ua: "Google Chrome";v="155", "Chromium";v="155", "Not(A:Brand";v="24"
+sec-ch-ua-mobile: ?0
+sec-ch-ua-platform: "Windows"
+upgrade-insecure-requests: 1
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36
+accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7
+x-browser-channel: stable
+x-browser-year: 2026
+x-browser-validation: <from your Chrome version>
+x-browser-copyright: Copyright 2026 Google LLC. All Rights Reserved.
+sec-fetch-site: cross-site
+sec-fetch-mode: navigate
+sec-fetch-dest: iframe
+sec-fetch-storage-access: none
+referer: https://www.ticketmaster.com/
+accept-encoding: gzip, deflate, br, zstd
+accept-language: en-GB,en-US;q=0.9,en;q=0.8
+priority: u=0, i
+```
+
+Chrome adds the `x-browser-*` headers to requests to Google. Copy them from a capture of the same Chrome version.
+
+As soon as the response arrives, record the time with `Date.now()`. That is `anchor_fetched`.
+
+## 4. Get the reload request from us
+
+Wait at least 200 ms after the anchor arrived: a browser needs that long to run reCAPTCHA, and earlier calls are refused
+with a `400`. Then:
+
+```bash
+curl -X POST https://tmpt.antibotapi.com/tmpt \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+    "cookies": ["LANGUAGE=en-us", "NDMA=200"],
+    "anchor_html": "<the anchor page from step 3>",
+    "anchor_fetched": 1792749801750
+  }'
+```
+
+| Field | What to send |
+| --- | --- |
+| `user_agent` | Your session's `User-Agent`. |
+| `cookies` | Your `www.ticketmaster.com` cookies that are not `HttpOnly`, as `name=value` strings. Leave out `tmpt`. An empty array is fine. |
+| `anchor_html` | The anchor page exactly as Google sent it. |
+| `anchor_fetched` | The time from step 3, in milliseconds. |
+
+```json
+{ "success": true, "reload": "ChhOaGZkWkh6cmUxNndyYzJtNkJ4RWR1N0..." }
+```
+
+`reload` is the request body as Base64. Each `200` is billed.
+
+<Aside type="caution">
+Decode `reload` before you send it to Google's `/reload`. It is a binary protobuf message: post the decoded bytes as they
+are, with `content-type: application/x-protobuffer`. Sending the Base64 text, or the bytes converted to a string, gets no
+token.
+</Aside>
+
+## 5. Post the reload request to Google
+
+POST the decoded bytes:
+
+```http
+POST /recaptcha/enterprise/reload?k=6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV HTTP/2
+host: www.google.com
+content-length: <length>
+sec-ch-ua-platform: "Windows"
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36
+sec-ch-ua: "Google Chrome";v="155", "Chromium";v="155", "Not(A:Brand";v="24"
+content-type: application/x-protobuffer
+sec-ch-ua-mobile: ?0
+accept: */*
+origin: https://www.google.com
+x-browser-channel: stable
+x-browser-year: 2026
+x-browser-validation: <from your Chrome version>
+x-browser-copyright: Copyright 2026 Google LLC. All Rights Reserved.
+sec-fetch-site: same-origin
+sec-fetch-mode: cors
+sec-fetch-dest: empty
+referer: <the anchor URL from step 3>
+accept-encoding: gzip, deflate, br, zstd
+accept-language: en-GB,en-US;q=0.9,en;q=0.8
+priority: u=1, i
+```
+
+Google answers with a JSON array after a `)]}'` line. The token is the second element:
+
+```
+)]}'
+["rresp","03AFcWeA5...",null,null,null,...]
+```
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js
+// The token from Google's /reload response.
+function parseToken(text) {
+  if (!text.startsWith(")]}'")) throw new Error('not a reload response');
+  const [kind, token] = JSON.parse(text.slice(text.indexOf('\n') + 1));
+  if (kind !== 'rresp' || typeof token !== 'string') throw new Error('no token');
+  return token;
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import json
+
+
+def parse_token(text: str) -> str:
+    """The token from Google's /reload response."""
+    if not text.startswith(")]}'"):
+        raise ValueError("not a reload response")
+    reply = json.loads(text.split("\n", 1)[1])
+    if reply[0] != "rresp" or not isinstance(reply[1], str):
+        raise ValueError("no token")
+    return reply[1]
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+import (
+	"encoding/json"
+	"errors"
+	"strings"
+)
+
+// ParseToken returns the token from Google's /reload response.
+func ParseToken(body []byte) (string, error) {
+	text := string(body)
+	if !strings.HasPrefix(text, ")]}'") {
+		return "", errors.New("not a reload response")
+	}
+	var reply []json.RawMessage
+	if err := json.Unmarshal([]byte(text[strings.IndexByte(text, '\n')+1:]), &reply); err != nil {
+		return "", err
+	}
+	var kind, token string
+	if len(reply) < 2 || json.Unmarshal(reply[0], &kind) != nil || kind != "rresp" || json.Unmarshal(reply[1], &token) != nil {
+		return "", errors.New("no token")
+	}
+	return token, nil
+}
+```
+
+</TabItem>
+</Tabs>
+
+## 6. Send the token to Ticketmaster
+
+```http
+POST /epsf/gec/v3/pageView HTTP/2
+host: www.ticketmaster.com
+content-length: <length>
+sec-ch-ua-platform: "Windows"
+sec-ch-ua: "Google Chrome";v="155", "Chromium";v="155", "Not(A:Brand";v="24"
+sec-ch-ua-mobile: ?0
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36
+content-type: application/json
+accept: */*
+origin: https://www.ticketmaster.com
+sec-fetch-site: same-origin
+sec-fetch-mode: cors
+sec-fetch-dest: empty
+referer: https://www.ticketmaster.com/
+accept-encoding: gzip, deflate, br, zstd
+accept-language: en-GB,en-US;q=0.9,en;q=0.8
+cookie: SID=...; BID=...; eps_sid=...; ...
+priority: u=1, i
+
+{"hostname":"www.ticketmaster.com","key":"6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV","token":"03AFcWeA5..."}
+```
+
+The response sets `tmpt`. Store it with the session's other cookies and carry on.
+
+## Steps 4–6 in code
+
+These use each language's standard HTTP client to keep them short. Send steps 5 and 6 through your Chrome-like client
+(see [Match a real browser](/start/fingerprinting/)), with the headers shown above, in the same session as steps 2 and 3.
+They use `parseToken` from step 5.
+
+<Tabs syncKey="lang">
+<TabItem label="JavaScript">
+
+```js
+const SITE_KEY = '6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV';
+
+// anchorUrl, anchorHtml and anchorFetched come from step 3. cookies are your non-HttpOnly
+// www.ticketmaster.com cookies as name=value strings; cookieHeader is the whole cookie header
+// for www.ticketmaster.com (SID, BID, eps_sid and the rest). Returns the tmpt Set-Cookie line.
+async function getTmpt({ apiKey, userAgent, anchorUrl, anchorHtml, anchorFetched, cookies, cookieHeader }) {
+  // 4. Wait until 200 ms after the anchor arrived, then get the reload request.
+  const wait = anchorFetched + 200 - Date.now();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  const made = await fetch('https://tmpt.antibotapi.com/tmpt', {
+    method: 'POST',
+    headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_agent: userAgent, cookies, anchor_html: anchorHtml, anchor_fetched: anchorFetched }),
+  });
+  if (!made.ok) throw new Error(`tmpt: ${made.status} ${await made.text()}`);
+  const reload = Buffer.from((await made.json()).reload, 'base64'); // binary protobuf
+
+  // 5. Post the bytes to Google and read the token.
+  const google = await fetch(`https://www.google.com/recaptcha/enterprise/reload?k=${SITE_KEY}`, {
+    method: 'POST',
+    headers: { 'user-agent': userAgent, 'content-type': 'application/x-protobuffer', referer: anchorUrl },
+    body: reload,
+  });
+  const token = parseToken(await google.text());
+
+  // 6. Hand the token to Ticketmaster. The response sets tmpt.
+  const view = await fetch('https://www.ticketmaster.com/epsf/gec/v3/pageView', {
+    method: 'POST',
+    headers: { 'user-agent': userAgent, 'content-type': 'application/json', referer: 'https://www.ticketmaster.com/', cookie: cookieHeader },
+    body: JSON.stringify({ hostname: 'www.ticketmaster.com', key: SITE_KEY, token }),
+  });
+  const tmpt = view.headers.getSetCookie().find((cookie) => cookie.startsWith('tmpt='));
+  if (!tmpt) throw new Error(`pageView ${view.status}: no tmpt`);
+  return tmpt;
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import base64
+import json
+import time
+
+import requests
+
+SITE_KEY = "6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV"
+
+
+def get_tmpt(session, api_key, user_agent, anchor_url, anchor_html, anchor_fetched, cookies):
+    """Steps 4-6. session is your Ticketmaster session, holding the cookies from step 2.
+    anchor_url, anchor_html and anchor_fetched come from step 3; cookies are your
+    non-HttpOnly www.ticketmaster.com cookies as name=value strings. Returns tmpt."""
+    # 4. Wait until 200 ms after the anchor arrived, then get the reload request.
+    wait = (anchor_fetched + 200) / 1000 - time.time()
+    if wait > 0:
+        time.sleep(wait)
+    made = requests.post(
+        "https://tmpt.antibotapi.com/tmpt",
+        headers={"x-api-key": api_key},
+        json={"user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html, "anchor_fetched": anchor_fetched},
+        timeout=30,
+    )
+    made.raise_for_status()
+    reload = base64.b64decode(made.json()["reload"])  # binary protobuf
+
+    # 5. Post the bytes to Google and read the token.
+    google = session.post(
+        f"https://www.google.com/recaptcha/enterprise/reload?k={SITE_KEY}",
+        headers={"user-agent": user_agent, "content-type": "application/x-protobuffer", "referer": anchor_url},
+        data=reload,
+    )
+    token = parse_token(google.text)
+
+    # 6. Hand the token to Ticketmaster. The response sets tmpt.
+    view = session.post(
+        "https://www.ticketmaster.com/epsf/gec/v3/pageView",
+        headers={"user-agent": user_agent, "content-type": "application/json", "referer": "https://www.ticketmaster.com/"},
+        data=json.dumps({"hostname": "www.ticketmaster.com", "key": SITE_KEY, "token": token}, separators=(",", ":")),
+    )
+    tmpt = view.cookies.get("tmpt")
+    if not tmpt:
+        raise RuntimeError(f"pageView {view.status_code}: no tmpt")
+    return tmpt
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+)
+
+const siteKey = "6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV"
+
+// GetTmpt does steps 4-6. client is your Ticketmaster session, with a cookie jar holding the
+// cookies from step 2. anchorURL, anchorHTML and anchorFetched come from step 3; cookies are
+// your non-HttpOnly www.ticketmaster.com cookies as name=value strings.
+func GetTmpt(client *http.Client, apiKey, userAgent, anchorURL, anchorHTML string, anchorFetched int64, cookies []string) (*http.Cookie, error) {
+	// 4. Wait until 200 ms after the anchor arrived, then get the reload request.
+	time.Sleep(time.Until(time.UnixMilli(anchorFetched + 200)))
+	body, _ := json.Marshal(map[string]any{"user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML, "anchor_fetched": anchorFetched})
+	req, _ := http.NewRequest("POST", "https://tmpt.antibotapi.com/tmpt", bytes.NewReader(body))
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	var made struct {
+		Reload string `json:"reload"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&made)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || err != nil {
+		return nil, fmt.Errorf("tmpt: %d %v", resp.StatusCode, err)
+	}
+	reload, err := base64.StdEncoding.DecodeString(made.Reload) // binary protobuf
+	if err != nil {
+		return nil, err
+	}
+
+	// 5. Post the bytes to Google and read the token.
+	req, _ = http.NewRequest("POST", "https://www.google.com/recaptcha/enterprise/reload?k="+siteKey, bytes.NewReader(reload))
+	req.Header.Set("user-agent", userAgent)
+	req.Header.Set("content-type", "application/x-protobuffer")
+	req.Header.Set("referer", anchorURL)
+	resp, err = client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	text, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	token, err := ParseToken(text)
+	if err != nil {
+		return nil, err
+	}
+
+	// 6. Hand the token to Ticketmaster. The response sets tmpt.
+	view, _ := json.Marshal(map[string]string{"hostname": "www.ticketmaster.com", "key": siteKey, "token": token})
+	req, _ = http.NewRequest("POST", "https://www.ticketmaster.com/epsf/gec/v3/pageView", bytes.NewReader(view))
+	req.Header.Set("user-agent", userAgent)
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("referer", "https://www.ticketmaster.com/")
+	resp, err = client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body.Close()
+	for _, cookie := range resp.Cookies() {
+		if cookie.Name == "tmpt" {
+			return cookie, nil
+		}
+	}
+	return nil, fmt.Errorf("pageView %d: no tmpt", resp.StatusCode)
+}
+```
+
+</TabItem>
+</Tabs>
+
+## When it fails
+
+| Status | Cause | What to do |
+| --- | --- | --- |
+| `400` | A field is missing or wrong, the user agent is not Chrome 145–155 on Windows, or the call came less than 200 ms after the anchor arrived. The message says which. | Fix it. If your server's clock is ahead of ours, the gap can come out short. |
+| `401` | The API key is missing, wrong or out of balance. | Check the key. |
+| `409` | The anchor is from a reCAPTCHA version we do not support yet. | Fetch the anchor with the `version` from `GET /config`. |
+| `501` | This anchor asks for something we cannot build yet. Not billed. | Tell us. |
+| `503` | Temporarily unavailable. | Retry after a few seconds. |
+
+If Google returns no `rresp` token, or Ticketmaster does not set `tmpt`, check that your session used one proxy and one
+user agent throughout, and that your client matches Chrome.
+
+<Aside>
+All fields are in the [API reference](/api/tmpt/).
+</Aside>

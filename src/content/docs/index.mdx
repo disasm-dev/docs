@@ -1,0 +1,37 @@
+---
+title: Introduction
+description: Request-based anti-bot solving API for DataDome, Incapsula, Kasada, Ticketmaster and Amazon.
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+disasm.dev solves anti-bot challenges over plain HTTP. You send us what the challenge gave you, we send back a solution,
+and you submit it from your own client. There is no browser to run.
+
+## What you can solve
+
+| Product | Challenges | Base URL |
+| --- | --- | --- |
+| [DataDome](/datadome/overview/) | Interstitial, slider and audio CAPTCHA, tags | `https://dd.antibotapi.com` |
+| [Incapsula](/incapsula/reese84/) | reese84 (with proof of work), utmvc | `https://incap.antibotapi.com` |
+| [Kasada](/kasada/overview/) (beta) | `/tl` payload, `x-kpsdk-cd` proof of work | `https://ksd.antibotapi.com` |
+| [Ticketmaster](/ticketmaster/tmpt/) | `tmpt` cookie | `https://tmpt.antibotapi.com` |
+| [Amazon](/amazon/metadata1/) | Sign-in `metadata1` | `https://metadata1.antibotapi.com` |
+
+## How a solve works
+
+1. You make the request that gets blocked, and read the values the challenge gives you.
+2. You send those values to us and get back a payload.
+3. You submit the payload from the same session and keep the cookie or token it earns.
+
+We only compute. The requests to the site, the proxy and the cookie jar stay yours, so your client has to look like a
+real Chrome browser. [Match a real browser](/start/fingerprinting/) covers that.
+
+## Next
+
+<CardGrid>
+	<LinkCard title="Quickstart" description="Create a key and make your first request." href="/start/quickstart/" />
+	<LinkCard title="Authentication" description="API keys, base URLs and request signing." href="/start/authentication/" />
+	<LinkCard title="Match a real browser" description="TLS, HTTP/2 and header order." href="/start/fingerprinting/" />
+	<LinkCard title="API reference" description="Every endpoint, field and status code." href="/api/datadome/" />
+</CardGrid>

@@ -1,0 +1,188 @@
+---
+title: Slider CAPTCHA
+description: Solve DataDome's slider or audio CAPTCHA and get a datadome cookie.
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+DataDome shows a CAPTCHA on higher-security pages. You fetch the CAPTCHA page (and its puzzle images, when it has a
+puzzle), send them to us, and GET the submit URL we return for a `datadome` cookie.
+
+Read the [overview](/datadome/overview/) first. CAPTCHA blocks need an exact Chrome fingerprint; any mismatch can get the
+cookie rejected.
+
+<Steps>
+
+1. Detect the block.
+2. Build the CAPTCHA URL.
+3. Fetch the CAPTCHA page, and its images if it has a puzzle.
+4. Get the solution from us (`POST /captcha`).
+5. GET the submit URL.
+6. Store the cookie and retry.
+
+</Steps>
+
+## 1. Detect the block
+
+The page answers `403`, loads `https://ct.captcha-delivery.com/c.js`, and has a `dd` object with `'rt':'c'`:
+
+```html
+<script>
+  var dd = {'rt':'c','cid':'AHrlqAAAAAMASuDzOQlFQzIALvhm3g==','hsh':'EC3B9FB6F2A31D3AF16C270E6531D2','t':'fe','s':43337,'e':'16fbe80bb40a1dfb31c417e8849d8d22','host':'geo.captcha-delivery.com'};
+</script>
+```
+
+<Aside type="danger">
+If `t` is `bv` after you have solved [tags](/datadome/tags/), the proxy is banned. Rotate it, clear the old `datadome`
+cookies and request the page again until you get `t=fe`.
+</Aside>
+
+## 2. Build the CAPTCHA URL
+
+Join these onto `https://geo.captcha-delivery.com/captcha/?` in this order. Only `initialCid` and `referer` are
+URL-encoded; send the rest as they are.
+
+| Parameter | Value |
+| --- | --- |
+| `initialCid` | `dd.cid`, URL-encoded |
+| `hash` | `dd.hsh` |
+| `cid` | Your current `datadome` cookie |
+| `t` | `dd.t` |
+| `referer` | The URL you were blocked on, URL-encoded |
+| `s`, `e` | `dd.s`, `dd.e` |
+| `dm` | `cd` |
+| `adobe_mc` | `captcha` |
+
+<Tabs syncKey="lang">
+<TabItem label="Go">
+
+```go
+import (
+	"encoding/json"
+	"errors"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var ddRe = regexp.MustCompile(`var dd\s*=\s*(\{[\s\S]*?\})`)
+
+type CaptchaDD struct {
+	Cid  string `json:"cid"`
+	Hash string `json:"hsh"`
+	T    string `json:"t"`
+	S    int64  `json:"s"`
+	E    string `json:"e"`
+}
+
+// CaptchaLink builds the CAPTCHA URL from a block page.
+func CaptchaLink(body, cookie, referer string) (string, error) {
+	m := ddRe.FindStringSubmatch(body)
+	if m == nil {
+		return "", errors.New("no dd object")
+	}
+	var dd CaptchaDD
+	if err := json.Unmarshal([]byte(strings.ReplaceAll(m[1], "'", `"`)), &dd); err != nil {
+		return "", err
+	}
+	params := []string{
+		"initialCid=" + url.QueryEscape(dd.Cid), "hash=" + dd.Hash, "cid=" + cookie, "t=" + dd.T,
+		"referer=" + url.QueryEscape(referer), "s=" + strconv.FormatInt(dd.S, 10), "e=" + dd.E, "dm=cd", "adobe_mc=captcha",
+	}
+	return "https://geo.captcha-delivery.com/captcha/?" + strings.Join(params, "&"), nil
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import json
+import re
+from urllib.parse import quote
+
+
+def captcha_link(body: str, cookie: str, referer: str) -> str:
+    """Build the CAPTCHA URL from a block page."""
+    match = re.search(r"var dd\s*=\s*(\{[\s\S]*?\})", body)
+    if not match:
+        raise ValueError("no dd object")
+    dd = json.loads(match.group(1).replace("'", '"'))
+    params = [
+        ("initialCid", quote(dd["cid"], safe="")), ("hash", dd["hsh"]), ("cid", cookie), ("t", dd["t"]),
+        ("referer", quote(referer, safe="")), ("s", str(dd["s"])), ("e", dd["e"]), ("dm", "cd"), ("adobe_mc", "captcha"),
+    ]
+    return "https://geo.captcha-delivery.com/captcha/?" + "&".join(f"{k}={v}" for k, v in params)
+```
+
+</TabItem>
+<TabItem label="JavaScript">
+
+```js
+// Build the CAPTCHA URL from a block page.
+function captchaLink(body, cookie, referer) {
+  const m = body.match(/var dd\s*=\s*(\{[\s\S]*?\})/);
+  if (!m) throw new Error('no dd object');
+  const dd = JSON.parse(m[1].replace(/'/g, '"'));
+  const params = [
+    'initialCid=' + encodeURIComponent(dd.cid), 'hash=' + dd.hsh, 'cid=' + cookie, 't=' + dd.t,
+    'referer=' + encodeURIComponent(referer), 's=' + dd.s, 'e=' + dd.e, 'dm=cd', 'adobe_mc=captcha',
+  ];
+  return 'https://geo.captcha-delivery.com/captcha/?' + params.join('&');
+}
+```
+
+</TabItem>
+</Tabs>
+
+## 3. Fetch the page and images
+
+GET the CAPTCHA URL and Base64-encode the page. Find the object passed to `sliderCaptcha({...})` in it.
+
+- If it has `noPuzzle: true`, there is nothing to solve visually. Skip the images.
+- Otherwise download two images and Base64-encode each:
+  - the **background**: the `captchaChallengePath` URL (it ends in `.jpg`)
+  - the **piece**: the same URL with `.jpg` replaced by `.frag.png`
+
+If the page loads its script from `https://ct.captcha-delivery.com/captcha.<ver>.js` instead of inline, fetch that too and
+Base64-encode it.
+
+## 4. Get the solution from us
+
+```bash
+curl -X POST https://dd.antibotapi.com/captcha \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "image",
+    "captcha_link": "https://geo.captcha-delivery.com/captcha/?initialCid=...",
+    "html": "<base64 of the captcha page>",
+    "background_image": "<base64, only when there is a puzzle>",
+    "fragment_image": "<base64, only when there is a puzzle>",
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "ip_address": "203.0.113.7"
+  }'
+```
+
+For the audio challenge, send `"type": "audio"` and the WAV file, Base64, as `audio_challenge`. On stricter sites it can
+help to switch between image and audio.
+
+You get back `captcha_submit_url` and `headers`, the client hints to send from now on. All fields are in the
+[API reference](/api/datadome/).
+
+## 5. GET the submit URL
+
+GET `captcha_submit_url` with Chrome's headers in Chrome's order. The `referer` is the CAPTCHA page, and the
+`user-agent` and `sec-ch-ua` headers must match the session.
+
+## 6. Store the cookie and retry
+
+A pass returns the cookie:
+
+```json
+{ "cookie": "datadome=...; Max-Age=31536000; Domain=.example.com; Path=/; Secure; SameSite=Lax" }
+```
+
+Store the `datadome` value for the site, replacing the old one, and retry the blocked request. If it is still blocked,
+retry the solve up to three times. After that, rotate the proxy, clear the cookies and start again from step 1.

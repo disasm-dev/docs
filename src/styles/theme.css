@@ -1,0 +1,48 @@
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/space-grotesk';
+@import '@fontsource-variable/jetbrains-mono';
+
+/* disasm brand: near-black surfaces, amber accent. */
+:root {
+	--sl-font: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+	--sl-font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+	--sl-color-accent-low: #3a2706;
+	--sl-color-accent: #d97706;
+	--sl-color-accent-high: #fcd34d;
+	--sl-color-white: #f5f5f5;
+	--sl-color-gray-1: #e5e5e5;
+	--sl-color-gray-2: #c4c4c4;
+	--sl-color-gray-3: #9a9a9e;
+	--sl-color-gray-4: #6b6b70;
+	--sl-color-gray-5: #3a3a3e;
+	--sl-color-gray-6: #242426;
+	--sl-color-black: #161616;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #fef3c7;
+	--sl-color-accent: #b45309;
+	--sl-color-accent-high: #78350f;
+	--sl-color-white: #161616;
+	--sl-color-gray-1: #242426;
+	--sl-color-gray-2: #3a3a3e;
+	--sl-color-gray-3: #5b5b60;
+	--sl-color-gray-4: #8a8a90;
+	--sl-color-gray-5: #c4c4c4;
+	--sl-color-gray-6: #ececec;
+	--sl-color-gray-7: #f6f6f6;
+	--sl-color-black: #ffffff;
+}
+
+h1,
+h2,
+h3,
+h4,
+.site-title {
+	font-family: 'Space Grotesk Variable', var(--sl-font);
+	letter-spacing: -0.01em;
+}
+
+.site-title img {
+	height: 2.25rem;
+}

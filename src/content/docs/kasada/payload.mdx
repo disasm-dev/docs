@@ -1,0 +1,237 @@
+---
+title: Payload
+description: Turn the ips.js your session was served into the /tl post that earns the session's tokens.
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+`POST /tl` takes the `ips.js` your session fetched and returns the headers and body for your own post to the sensor's
+`/tl`. Read the [overview](/kasada/overview/) first.
+
+<Steps>
+
+1. Detect the block and find the sensor path.
+2. Walk the handshake to build the `ips.js` link.
+3. Fetch the script.
+4. Get the payload from us (`POST /tl`).
+5. Post the payload to the sensor.
+6. Keep the new tokens.
+
+</Steps>
+
+## 1. Detect the block
+
+A Kasada block is a `403` or `429` whose page loads a script from a path of two GUIDs:
+
+```html
+<script src="/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/p.js"></script>
+```
+
+Everything before `/p.js` is the sensor path. Call it `base`; the sensor endpoints hang off it. Some sites load this
+script on every page instead of only on blocks; the flow is the same.
+
+## 2. Build the ips.js link
+
+1. `GET base/mfc`. Keep the `x-kpsdk-h` response header for the protected requests later.
+2. `GET base/fp?x-kpsdk-v=VERSION` as an iframe navigation. It answers `429`, which is normal here. Keep:
+   - the `x-kpsdk-ct` response header
+   - the `im` value from the body, the characters after `KPSDK:MC:` up to the next `:`, `'` or `"`:
+
+     ```
+     window.parent.postMessage('KPSDK:MC:AALVrtI5A_dxWNuz...G6I:D1gEBXBUXVxYQg:F142AkFRRE1F', '*');
+     ```
+3. Build the link: `base/ips.js?KP_UIDz=CT&x-kpsdk-v=VERSION&x-kpsdk-im=IM`.
+
+`VERSION` is the SDK version the site uses, such as `j-1.2.657`. Read it from the site's own `p.js` request; it changes.
+
+## 3. Fetch the script
+
+GET the link from step 2 with your session's headers and Base64-encode the body exactly as served. Do not reformat it.
+
+## 4. Get the payload from us
+
+```bash
+curl -X POST https://ksd.antibotapi.com/tl \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    "script": "<base64 of the ips.js body>",
+    "ips_link": "https://k.twitchcdn.net/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/ips.js?KP_UIDz=...&x-kpsdk-v=j-1.2.657&x-kpsdk-im=...",
+    "accept_language": "en-GB,en-US;q=0.9,en;q=0.8",
+    "page_url": "https://www.twitch.tv/",
+    "ip": "203.0.113.7"
+  }'
+```
+
+| Field | What to send |
+| --- | --- |
+| `user_agent` | Your `User-Agent` header, byte for byte. |
+| `script` | The script from step 3, Base64. |
+| `ips_link` | The link from step 2, exactly as you fetched it. |
+| `accept_language` | Your `Accept-Language` header, the whole list. |
+| `page_url` | Optional. The page the sensor runs in, such as `https://www.twitch.tv/`. Send it. |
+| `ip` | Optional. Your proxy's exit IP; sets the payload's timezone. Without it, `Europe/London`. |
+
+The response:
+
+```json
+{
+  "headers": {
+    "x-kpsdk-ct": "2:AABbHF9lHkY0dHJhbnNwb3J0LXRva2Vu...tXlKQ",
+    "x-kpsdk-dt": "145ky37w12g5hqz0b8...",
+    "x-kpsdk-v": "j-1.2.657",
+    "x-kpsdk-r": "",
+    "x-kpsdk-dv": "",
+    "x-kpsdk-h": "01",
+    "x-kpsdk-fc": "",
+    "x-kpsdk-im": "AALVrtI5A_dxWNuz...G6I"
+  },
+  "payload": "AAJCefs6KGHgAKpic3C7nFuW..."
+}
+```
+
+Base64-decode `payload` and post the raw bytes. They start with `0x00 0x02`.
+
+### The user agent
+
+The payload describes Chrome on Windows, so `user_agent` must too, or you get a `400`:
+
+- It starts with `Mozilla/5.0 (Windows NT`.
+- It has a `Chrome/` version of 100 or higher, and `Safari/537.36`.
+- It is not Edge, Opera, Vivaldi, Brave, Yandex or Samsung Internet, and not mobile.
+
+Send a `sec-ch-ua` that matches the Chrome version in it. Chrome changes the order and the fake "Not A Brand" entry
+with every version, so generate it per version rather than copying one.
+
+<Tabs syncKey="lang">
+<TabItem label="Go">
+
+```go
+// SolvePayload returns the x-kpsdk-* headers and the decoded /tl body.
+func SolvePayload(apiKey, ipsLink string, script []byte, userAgent, acceptLanguage, pageURL, ip string) (map[string]string, []byte, error) {
+	body, _ := json.Marshal(map[string]string{
+		"user_agent": userAgent, "script": base64.StdEncoding.EncodeToString(script), "ips_link": ipsLink,
+		"accept_language": acceptLanguage, "page_url": pageURL, "ip": ip,
+	})
+	req, _ := http.NewRequest("POST", "https://ksd.antibotapi.com/tl", bytes.NewReader(body))
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, nil, fmt.Errorf("tl: %d: %s", resp.StatusCode, b)
+	}
+	var solved struct {
+		Headers map[string]string `json:"headers"`
+		Payload string            `json:"payload"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&solved); err != nil {
+		return nil, nil, err
+	}
+	payload, err := base64.StdEncoding.DecodeString(solved.Payload)
+	return solved.Headers, payload, err
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import base64
+
+import requests
+
+
+def solve_payload(api_key, ips_link, script: bytes, user_agent, accept_language, page_url="", ip=""):
+    """Return the x-kpsdk-* headers and the decoded /tl body."""
+    r = requests.post(
+        "https://ksd.antibotapi.com/tl",
+        headers={"x-api-key": api_key},
+        json={"user_agent": user_agent, "script": base64.b64encode(script).decode(), "ips_link": ips_link,
+              "accept_language": accept_language, "page_url": page_url, "ip": ip},
+        timeout=30,
+    )
+    r.raise_for_status()
+    solved = r.json()
+    return solved["headers"], base64.b64decode(solved["payload"])
+```
+
+</TabItem>
+<TabItem label="JavaScript">
+
+```js
+// Returns the x-kpsdk-* headers and the decoded /tl body.
+async function solvePayload(apiKey, ipsLink, script, { userAgent, acceptLanguage, pageUrl = '', ip = '' }) {
+  const res = await fetch('https://ksd.antibotapi.com/tl', {
+    method: 'POST',
+    headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_agent: userAgent, script: Buffer.from(script).toString('base64'), ips_link: ipsLink,
+      accept_language: acceptLanguage, page_url: pageUrl, ip,
+    }),
+  });
+  if (!res.ok) throw new Error(`tl: ${res.status}: ${await res.text()}`);
+  const solved = await res.json();
+  return { headers: solved.headers, payload: Buffer.from(solved.payload, 'base64') };
+}
+```
+
+</TabItem>
+</Tabs>
+
+## 5. Post the payload to the sensor
+
+POST the decoded bytes to `base/tl` over **HTTP/1.1** as `application/octet-stream`. Send `x-kpsdk-ct`, `x-kpsdk-dt`,
+`x-kpsdk-im` and `x-kpsdk-v` from our response, and none of the others. Chrome mixes the client hints in between them,
+and the `referer` is the `/fp` URL from step 2:
+
+```http
+POST /149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/tl HTTP/1.1
+Host: k.twitchcdn.net
+connection: keep-alive
+content-length: 5312
+x-kpsdk-ct: 2:AABbHF9lHkY0dHJhbnNwb3J0LXRva2Vu...tXlKQ
+sec-ch-ua-platform: "Windows"
+x-kpsdk-dt: 145ky37w12g5hqz0b8...
+sec-ch-ua: "Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"
+x-kpsdk-im: AALVrtI5A_dxWNuz...G6I
+sec-ch-ua-mobile: ?0
+x-kpsdk-v: j-1.2.657
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36
+content-type: application/octet-stream
+accept: */*
+origin: https://k.twitchcdn.net
+sec-fetch-site: same-origin
+sec-fetch-mode: cors
+sec-fetch-dest: empty
+sec-fetch-storage-access: none
+referer: https://k.twitchcdn.net/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/fp?x-kpsdk-v=j-1.2.657
+accept-encoding: gzip, deflate, br, zstd
+accept-language: en-GB,en-US;q=0.9,en;q=0.8
+```
+
+The sensor answers `{"reload":true}` when it accepts the payload. Whether the session works only shows when you use it
+on a protected request.
+
+## 6. Keep the new tokens
+
+The sensor's `/tl` response has two headers you need next:
+
+- `x-kpsdk-ct`: a **new** token. Use it from now on, not the one you sent.
+- `x-kpsdk-st`: the sensor's clock in milliseconds.
+
+Take both to [Proof of work](/kasada/proof-of-work/).
+
+## When it fails
+
+| Status | Cause |
+| --- | --- |
+| `400` | Something in the request is wrong: the message says which field. |
+| `401` | The API key is missing, wrong or out of balance, or its signature is wrong. |
+| `403` | The host in `ips_link` is not approved for your account. |
+| `502` | The script could not be solved. Almost always it is stale: walk the handshake again and send a freshly fetched `ips.js`. If a fresh script also fails, tell us. |

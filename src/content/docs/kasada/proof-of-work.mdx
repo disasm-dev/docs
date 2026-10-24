@@ -1,0 +1,163 @@
+---
+title: Proof of work
+description: Mint the x-kpsdk-cd header that every request to a Kasada-protected endpoint carries. Free.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+After the sensor accepts your [payload](/kasada/payload/), the site's protected endpoints want a proof of work on every
+request, in the `x-kpsdk-cd` header. `POST /cd` makes one. It is free and unmetered.
+
+## 1. Read `st` and `ct` from the sensor's `/tl` response
+
+- `x-kpsdk-st`: the sensor's clock, in milliseconds. This is `st`.
+- `x-kpsdk-ct`: the **new** token from that response. This is `ct`.
+
+## 2. Get a proof of work from us
+
+```bash
+curl -X POST https://ksd.antibotapi.com/cd \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "st": 1785412800000,
+    "ct": "2:AABbHF9lHkY0dHJhbnNwb3J0LXRva2Vu...tXlKQ",
+    "domain": "gql.twitch.tv"
+  }'
+```
+
+| Field | What to send |
+| --- | --- |
+| `st` | `x-kpsdk-st` from step 1. |
+| `ct` | `x-kpsdk-ct` from step 1. |
+| `domain` | The host of the request you are about to make. |
+| `work_time` | Optional. When the work claims to have been done, in ms on the sensor's clock. Defaults to `st`. |
+
+The response holds the header value as a string:
+
+```json
+{ "payload": "{\"workTime\":1785412800000,\"id\":\"346301404f5e09223dd31225727ade59\",\"answers\":[2,6],\"duration\":31.771,\"d\":12,\"st\":1785412800000,\"rst\":1785412800012}" }
+```
+
+Send `payload` as `x-kpsdk-cd` exactly as it is. Do not parse and re-serialise it: the key order is part of the value.
+
+<Aside type="caution">
+`domain` is the host of the **protected API**, which is often not the host that served `ips.js`. For Twitch the script
+comes from `k.twitchcdn.net` but `domain` is `gql.twitch.tv`. A wrong `domain` gives a well-formed answer that the site
+refuses without saying why.
+</Aside>
+
+<Tabs syncKey="lang">
+<TabItem label="Go">
+
+```go
+// SolveProofOfWork returns one x-kpsdk-cd value. Send it unchanged.
+func SolveProofOfWork(apiKey string, st int64, ct, domain string) (string, error) {
+	body, _ := json.Marshal(map[string]any{"st": st, "ct": ct, "domain": domain})
+	req, _ := http.NewRequest("POST", "https://ksd.antibotapi.com/cd", bytes.NewReader(body))
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("cd: %d: %s", resp.StatusCode, b)
+	}
+	var solved struct {
+		Payload string `json:"payload"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&solved)
+	return solved.Payload, err
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import requests
+
+
+def solve_proof_of_work(api_key: str, st: int, ct: str, domain: str) -> str:
+    """Return one x-kpsdk-cd value. Send it unchanged."""
+    r = requests.post(
+        "https://ksd.antibotapi.com/cd",
+        headers={"x-api-key": api_key},
+        json={"st": st, "ct": ct, "domain": domain},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()["payload"]
+```
+
+</TabItem>
+<TabItem label="JavaScript">
+
+```js
+// Returns one x-kpsdk-cd value. Send it unchanged.
+async function solveProofOfWork(apiKey, st, ct, domain) {
+  const res = await fetch('https://ksd.antibotapi.com/cd', {
+    method: 'POST',
+    headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ st, ct, domain }),
+  });
+  if (!res.ok) throw new Error(`cd: ${res.status}: ${await res.text()}`);
+  return (await res.json()).payload;
+}
+```
+
+</TabItem>
+</Tabs>
+
+## 3. Make the protected request
+
+Send `x-kpsdk-ct` (the new one), `x-kpsdk-h` (from your `/mfc`), `x-kpsdk-v` and `x-kpsdk-cd`. The header order differs
+from the sensor's `/tl` post: `accept-language` moves up among the client hints, `x-kpsdk-cd` sits between `x-kpsdk-v`
+and `user-agent`, and there is no `sec-fetch-storage-access`:
+
+```http
+POST /gql HTTP/1.1
+Host: gql.twitch.tv
+connection: keep-alive
+content-length: 218
+x-kpsdk-ct: 2:AABbHF9lHkY0dHJhbnNwb3J0LXRva2Vu...tXlKQ
+sec-ch-ua-platform: "Windows"
+accept-language: en-GB
+x-kpsdk-h: <the value your /mfc response returned>
+sec-ch-ua: "Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"
+sec-ch-ua-mobile: ?0
+x-kpsdk-v: j-1.2.657
+x-kpsdk-cd: {"workTime":1785412800000,"id":"346301404f5e09223dd31225727ade59","answers":[2,6],"duration":31.771,"d":12,"st":1785412800000,"rst":1785412800012}
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36
+content-type: text/plain;charset=UTF-8
+accept: */*
+origin: https://www.twitch.tv
+sec-fetch-site: same-site
+sec-fetch-mode: cors
+sec-fetch-dest: empty
+referer: https://www.twitch.tv/
+accept-encoding: gzip, deflate, br, zstd
+cookie: ...
+```
+
+Here Chrome sends the page's single locale (`en-GB`), not the full list it sends to the sensor.
+
+## One proof of work per request
+
+Mint a new one for every protected request. Two requests with the same proof of work are not something a browser sends,
+and an old one claims a time that is further away with every second. It is free, so there is nothing to save by reusing
+one. Solve a new [payload](/kasada/payload/) only when the session itself expires.
+
+## When it fails
+
+| Status | Cause |
+| --- | --- |
+| `400` | Unreadable JSON, an empty `ct`, or a `domain` we do not support yet. Check the host first: `www.example.com` and `api.example.com` are different. If it is right, ask us to add it. |
+| `401` | The API key is missing, wrong or out of balance, or its signature is wrong. |
+| `403` | `domain` is not approved for your account. |
+
+A `200` is always a valid proof of work. If the site still refuses the request, check `domain`, then that `ct` is the
+new token, then `st`, then your request's fingerprint.

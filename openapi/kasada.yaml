@@ -1,0 +1,261 @@
+openapi: 3.1.0
+info:
+  title: Kasada
+  version: 1.0.0
+  description: |
+    Turns the `ips.js` a Kasada-protected site served your session into the `/tl` payload, and mints the
+    `x-kpsdk-cd` proof of work for each protected request. We never fetch the script or contact the site for you.
+
+    Kasada is in invite-only beta. `POST /tl` is billed per `200`; `POST /cd` is free. Both only accept hosts approved
+    for your account. See the [Kasada guide](/kasada/overview/).
+servers:
+  - url: https://ksd.antibotapi.com
+    description: Production
+security:
+  - ApiKey: []
+tags:
+  - name: kasada
+paths:
+  /tl:
+    post:
+      tags: [kasada]
+      operationId: solveTl
+      summary: Build the /tl payload
+      description: |
+        Send the `ips.js` your session fetched and its link. Returns the `x-kpsdk-*` headers and the body for your
+        `POST /tl` to the sensor. Billed per `200`.
+      parameters:
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TlRequest'
+            example:
+              user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36
+              script: <base64 of the ips.js body>
+              ips_link: https://k.twitchcdn.net/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/ips.js?KP_UIDz=2:AABbHF9l...&x-kpsdk-v=j-1.2.657&x-kpsdk-im=AALVrtI5...
+              accept_language: en-GB,en-US;q=0.9,en;q=0.8
+              page_url: https://www.twitch.tv/
+              ip: 203.0.113.7
+      responses:
+        '200':
+          description: The headers and body for your `/tl` POST.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TlResponse'
+              example:
+                headers:
+                  x-kpsdk-ct: 2:AABbHF9lHkY0dHJhbnNwb3J0LXRva2Vu...tXlKQ
+                  x-kpsdk-dt: 145ky37w12g5hqz0b8...
+                  x-kpsdk-v: j-1.2.657
+                  x-kpsdk-r: ''
+                  x-kpsdk-dv: ''
+                  x-kpsdk-h: '01'
+                  x-kpsdk-fc: ''
+                  x-kpsdk-im: AALVrtI5A_dxWNuz...G6I
+                payload: AAJCefs6KGHgAKpic3C7nFuW...
+        '400':
+          description: |
+            The request is wrong, and the message says what: unreadable JSON, a `script` that is not Base64, an
+            `ips_link` missing `KP_UIDz`, `x-kpsdk-v` or `x-kpsdk-im`, a malformed `ip`, or a `user_agent` that is not
+            Chrome on Windows.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotApproved'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '502':
+          description: |
+            The script could not be solved. Almost always a stale script: fetch a fresh `ips.js` from your session and
+            retry. Not billed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /cd:
+    post:
+      tags: [kasada]
+      operationId: solveCd
+      summary: Mint an x-kpsdk-cd proof of work
+      description: |
+        Send `st` and `ct` from the `/tl` response and the host of the request you are about to make. Returns the
+        `x-kpsdk-cd` header value. Mint a new one for every protected request. Free and unmetered.
+      parameters:
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CdRequest'
+            example:
+              st: 1785412800000
+              ct: 2:AABbHF9lHkY0dHJhbnNwb3J0LXRva2Vu...tXlKQ
+              domain: gql.twitch.tv
+      responses:
+        '200':
+          description: The `x-kpsdk-cd` header value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CdResponse'
+              example:
+                payload: '{"workTime":1785412800000,"id":"346301404f5e09223dd31225727ade59","answers":[2,6],"duration":31.771,"d":12,"st":1785412800000,"rst":1785412800012}'
+        '400':
+          description: Unreadable JSON, an empty `ct`, or a `domain` we do not support yet. The message says which.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotApproved'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Your API key from the [dashboard](https://dashboard.disasm.dev).
+  parameters:
+    Signature:
+      name: x-signature
+      in: header
+      required: false
+      description: A request signature. Required only when signing is on for your key. See [Authentication](/start/authentication/).
+      schema:
+        type: string
+  responses:
+    Unauthorized:
+      description: The API key is missing, unknown, revoked or out of balance, or its signature is wrong.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotApproved:
+      description: The host is not approved for your account. The message names it. Request it from the dashboard.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            error:
+              type: validation
+              message: site "k.example.net" is not in the whitelist
+    TooLarge:
+      description: The body is over 32 MB.
+  schemas:
+    TlRequest:
+      type: object
+      required: [user_agent, script, ips_link, accept_language]
+      properties:
+        user_agent:
+          type: string
+          description: |
+            The `User-Agent` you will send, byte for byte. Chrome 100 or later on Windows; other browsers, Chromium
+            forks (Edge, Opera, Brave, Vivaldi) and mobile user agents are refused with a `400`.
+        script:
+          type: string
+          contentEncoding: base64
+          description: The `ips.js` body exactly as served, Base64-encoded.
+        ips_link:
+          type: string
+          format: uri
+          description: The `ips.js` URL you fetched, query string included. Its host must be approved for your account.
+        accept_language:
+          type: string
+          description: The `Accept-Language` header you send to the sensor, verbatim (the whole list, not one locale).
+        page_url:
+          type: string
+          format: uri
+          description: The page the sensor is embedded in, such as `https://www.twitch.tv/`. Optional but recommended.
+        ip:
+          type: string
+          description: |
+            Your proxy's exit IP. Sets the timezone the payload reports. Optional; without it the payload uses
+            `Europe/London`.
+    TlResponse:
+      type: object
+      required: [headers, payload]
+      properties:
+        headers:
+          type: object
+          description: |
+            `x-kpsdk-*` headers for your `/tl` POST, keyed by header name. Send `ct`, `dt`, `im` and `v`. Leave out the
+            empty ones (`r`, `dv`, `fc`) and `h`.
+          properties:
+            x-kpsdk-ct:
+              type: string
+            x-kpsdk-dt:
+              type: string
+            x-kpsdk-v:
+              type: string
+            x-kpsdk-r:
+              type: string
+            x-kpsdk-dv:
+              type: string
+            x-kpsdk-h:
+              type: string
+            x-kpsdk-fc:
+              type: string
+            x-kpsdk-im:
+              type: string
+        payload:
+          type: string
+          contentEncoding: base64
+          description: The `/tl` body, Base64. Decode it and post the raw bytes as `application/octet-stream`.
+    CdRequest:
+      type: object
+      required: [st, ct, domain]
+      properties:
+        st:
+          type: integer
+          format: int64
+          description: The `x-kpsdk-st` header from the `/tl` response, in milliseconds.
+        ct:
+          type: string
+          description: The `x-kpsdk-ct` header from the `/tl` response (the new token, not the one you sent).
+        domain:
+          type: string
+          description: |
+            The host of the protected request you are about to make, such as `gql.twitch.tv`. This is often not the
+            host that served `ips.js`.
+        work_time:
+          type: integer
+          format: int64
+          description: Optional. When the work claims to have been done, in milliseconds on the sensor's clock. Defaults to `st`.
+    CdResponse:
+      type: object
+      required: [payload]
+      properties:
+        payload:
+          type: string
+          description: The `x-kpsdk-cd` header value. Send it unchanged; do not re-serialise it.
+    Error:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          const: false
+        error:
+          type: object
+          required: [type, message]
+          properties:
+            type:
+              type: string
+            message:
+              type: string
+              description: What went wrong.

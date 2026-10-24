@@ -1,0 +1,87 @@
+---
+title: Match a real browser
+description: Your HTTP client must look like Chrome on Windows at the TLS, HTTP/2 and header level.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+A correct payload is half a solve. Before the anti-bot looks at your cookie, it fingerprints the connection. If that
+does not look like the browser your payload describes, you are blocked anyway.
+
+Our payloads describe **Chrome on Windows**, so your client must be Chrome on Windows too.
+
+## What gets checked
+
+- **TLS.** The ciphers, extensions and curves in your handshake (JA3/JA4). Go's, Python's and Node's default clients are
+  easy to tell apart from Chrome.
+- **HTTP/2.** The SETTINGS frame, window updates and pseudo-header order.
+- **Header order.** Chrome sends headers in a fixed order. A library that sorts or reorders them gives you away.
+
+A standard HTTP library controls none of this, so use a client built for it.
+
+## Use httpcloak
+
+[httpcloak](https://github.com/sardanioss/httpcloak) ([docs](https://httpcloak.dev)) reproduces Chrome's TLS, HTTP/2 and
+HTTP/3 fingerprints and keeps your header order. It has presets per browser version, and bindings for Go, Python, Node.js
+and C#. Use a Windows Chrome preset and keep it current.
+
+<Tabs syncKey="lang">
+<TabItem label="Go">
+
+```go
+import (
+	"context"
+	"fmt"
+
+	"github.com/sardanioss/httpcloak/client"
+)
+
+c := client.NewClient("chrome-146-windows")
+defer c.Close()
+
+resp, _ := c.Get(context.Background(), "https://example.com", nil)
+fmt.Println(resp.StatusCode, resp.Protocol)
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import httpcloak
+
+r = httpcloak.get("https://example.com", preset="chrome-146-windows")
+print(r.status_code, r.protocol)
+```
+
+</TabItem>
+<TabItem label="JavaScript">
+
+```js
+import httpcloak from 'httpcloak';
+
+const session = new httpcloak.Session({ preset: 'chrome-146-windows' });
+const r = await session.get('https://example.com');
+console.log(r.statusCode, r.protocol);
+session.close();
+```
+
+</TabItem>
+</Tabs>
+
+## Keep the session consistent
+
+- **User-Agent and client hints.** Send one `User-Agent` for the whole session, with `sec-ch-ua` headers for the same
+  Chrome version. When our API returns headers (DataDome's `headers`, Incapsula's `sec_ch_ua`), send those values.
+- **Accept-Language.** Send the same value on every request. Where an endpoint asks for it, pass the value you send.
+- **Proxy.** Use one proxy for the whole flow. Where an endpoint takes `ip_address` or `ip`, pass that proxy's exit IP,
+  so the payload's timezone matches where your requests come from.
+
+## Copy the header order from a real browser
+
+Record a real Chrome session against the site with [Charles Proxy](https://www.charlesproxy.com) and copy each
+request's headers in order. Proxyman and Fiddler do not keep HTTP/2 header order, so they show you the wrong order.
+
+<Aside type="caution">
+A few requests must go over HTTP/1.1, such as DataDome's interstitial POST and Kasada's `/tl` POST. Each guide says
+where.
+</Aside>

@@ -1,0 +1,227 @@
+openapi: 3.0.3
+info:
+  title: Incapsula
+  version: 1.0.0
+  description: |
+    Solves Incapsula (Imperva) `reese84`, including its proof of work, and the legacy `___utmvc` challenge. You submit
+    what we return from your own session.
+
+    Each `200` is billed. See the [reese84](/incapsula/reese84/) and [utmvc](/incapsula/utmvc/) guides.
+servers:
+  - url: https://incap.antibotapi.com
+    description: Production
+security:
+  - ApiKey: []
+tags:
+  - name: incapsula
+paths:
+  /reese84:
+    post:
+      tags: [incapsula]
+      operationId: solveReese84
+      summary: Solve reese84
+      description: |
+        Send the challenge script and where it came from. Returns the body to POST to the site's reese84 endpoint, which
+        answers with the `reese84` token. If the site issues a proof of work, also send it as `pow`.
+      parameters:
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Reese84Request'
+            example:
+              page_url: https://join.pokemon.com/
+              incapsula_url: https://join.pokemon.com/Exeunt-the-To-plucke-own-what-withathe-now-Busin/QY0pUGn0a7n3HCKOzYTo-83x_qJnyPzHCCgdxrW1H2g?d=join.pokemon.com
+              user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36
+              script_b64: <base64 of the reese84 script>
+      responses:
+        '200':
+          description: Solved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reese84Response'
+              example:
+                success: true
+                userAgent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36
+                sec_ch_ua: '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"'
+                reese84Payload:
+                  solution:
+                    interrogation:
+                      p: baPowIjFO...
+                      st: 1741953935
+                      sr: 675942719
+                      cr: 368236290
+                      og: 2
+                    version: stable
+                  old_token: null
+                  error: null
+                  performance:
+                    interrogation: 306
+        '400':
+          description: The request is invalid or the script could not be solved. `message` says why. Not billed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /utmvc:
+    post:
+      tags: [incapsula]
+      operationId: solveUtmvc
+      summary: Solve utmvc
+      description: |
+        Send the utmvc challenge script. Returns the `___utmvc` cookie value and, when the site wants it, the
+        `SWHANEDL` value to request next.
+      parameters:
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UtmvcRequest'
+            example:
+              script: <base64 of the utmvc script>
+              session_cookies: [<value of incap_ses_xxx>]
+      responses:
+        '200':
+          description: Solved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UtmvcResponse'
+              example:
+                ___utmvc: QAolXPoMnOY44mHQgmHUk2JASSm3Qdv2mqFF...
+                SWHANEDL: 5328892720666706300,11075350648989097825,9380172380300787245,645620
+        '400':
+          description: The request is invalid or the script could not be solved. `error` says why. Not billed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StringError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Your API key from the [dashboard](https://dashboard.disasm.dev).
+  parameters:
+    Signature:
+      name: x-signature
+      in: header
+      required: false
+      description: A request signature. Required only when signing is on for your key. See [Authentication](/start/authentication/).
+      schema:
+        type: string
+  responses:
+    Unauthorized:
+      description: The API key is missing, unknown, revoked or out of balance, or its signature is wrong.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/KeyError'
+          example:
+            success: false
+            error:
+              type: validation
+              message: x-api-key is required
+  schemas:
+    Reese84Request:
+      type: object
+      required: [page_url, incapsula_url, user_agent, script_b64]
+      properties:
+        page_url:
+          type: string
+          description: The page that served the challenge.
+        incapsula_url:
+          type: string
+          description: The reese84 endpoint you fetched the script from, query string included.
+        user_agent:
+          type: string
+          description: The `User-Agent` for the session. Chrome on Windows.
+        script_b64:
+          type: string
+          format: byte
+          description: The challenge script fetched from `incapsula_url`, Base64-encoded.
+        pow:
+          type: string
+          description: |
+            The proof-of-work challenge, only for sites that issue one: the response to your `{"f":"gpc"}` POST to the
+            reese84 endpoint, unchanged.
+        language:
+          type: string
+          description: Optional. The first tag of your `Accept-Language` header.
+    Reese84Response:
+      type: object
+      properties:
+        success:
+          type: boolean
+        userAgent:
+          type: string
+          description: The `User-Agent` the payload was built for.
+        sec_ch_ua:
+          type: string
+          description: The `sec-ch-ua` header to send with it.
+        reese84Payload:
+          type: object
+          description: The body to POST, as JSON, to the reese84 endpoint (`incapsula_url`).
+    UtmvcRequest:
+      type: object
+      required: [script]
+      properties:
+        script:
+          type: string
+          format: byte
+          description: The utmvc challenge script, Base64-encoded.
+        session_cookies:
+          type: array
+          items:
+            type: string
+          description: The values (not names) of every `incap_ses_*` cookie in your jar.
+    UtmvcResponse:
+      type: object
+      properties:
+        ___utmvc:
+          type: string
+          description: The `___utmvc` cookie value.
+        SWHANEDL:
+          type: string
+          description: When not empty, GET `/_Incapsula_Resource?SWHANEDL=<value>` on the site.
+    MessageError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          description: What went wrong.
+    StringError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          description: What went wrong.
+    KeyError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            type:
+              type: string
+            message:
+              type: string
