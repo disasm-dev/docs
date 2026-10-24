@@ -33,9 +33,72 @@ Base URL: `https://tmpt.antibotapi.com`
 
 ## 1. Get the version
 
+<Tabs syncKey="lang">
+<TabItem label="cURL">
+
 ```bash
 curl https://tmpt.antibotapi.com/config -H "x-api-key: YOUR_API_KEY"
 ```
+
+</TabItem>
+<TabItem label="JavaScript">
+
+```js
+async function getVersion(apiKey) {
+  const res = await fetch('https://tmpt.antibotapi.com/config', { headers: { 'x-api-key': apiKey } });
+  if (!res.ok) throw new Error(`config: ${res.status} ${await res.text()}`);
+  return (await res.json()).version;
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import requests
+
+
+def get_version(api_key: str) -> str:
+    res = requests.get("https://tmpt.antibotapi.com/config", headers={"x-api-key": api_key}, timeout=30)
+    res.raise_for_status()
+    return res.json()["version"]
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+)
+
+func GetVersion(apiKey string) (string, error) {
+	req, _ := http.NewRequest("GET", "https://tmpt.antibotapi.com/config", nil)
+	req.Header.Set("x-api-key", apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("config: %d %s", resp.StatusCode, body)
+	}
+	var config struct {
+		Version string `json:"version"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&config)
+	return config.Version, err
+}
+```
+
+</TabItem>
+</Tabs>
+
+The response:
 
 ```json
 { "success": true, "version": "NhfdZHzre16wrc2m6BxEdu7J" }
@@ -172,6 +235,9 @@ As soon as the response arrives, record the time with `Date.now()`. That is `anc
 Wait at least 200 ms after the anchor arrived: a browser needs that long to run reCAPTCHA, and earlier calls are refused
 with a `400`. Then:
 
+<Tabs syncKey="lang">
+<TabItem label="cURL">
+
 ```bash
 curl -X POST https://tmpt.antibotapi.com/tmpt \
   -H "x-api-key: YOUR_API_KEY" \
@@ -183,6 +249,92 @@ curl -X POST https://tmpt.antibotapi.com/tmpt \
     "anchor_fetched": 1792749801750
   }'
 ```
+
+</TabItem>
+<TabItem label="JavaScript">
+
+```js
+// anchorHtml and anchorFetched come from step 3. Returns the reload request body as bytes.
+async function getReload(apiKey, userAgent, cookies, anchorHtml, anchorFetched) {
+  const wait = anchorFetched + 200 - Date.now();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  const res = await fetch('https://tmpt.antibotapi.com/tmpt', {
+    method: 'POST',
+    headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_agent: userAgent, cookies, anchor_html: anchorHtml, anchor_fetched: anchorFetched }),
+  });
+  if (!res.ok) throw new Error(`tmpt: ${res.status} ${await res.text()}`);
+  return Buffer.from((await res.json()).reload, 'base64'); // binary protobuf
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import base64
+import time
+
+import requests
+
+
+def get_reload(api_key: str, user_agent: str, cookies: list[str], anchor_html: str, anchor_fetched: int) -> bytes:
+    """anchor_html and anchor_fetched come from step 3. Returns the reload request body as bytes."""
+    wait = (anchor_fetched + 200) / 1000 - time.time()
+    if wait > 0:
+        time.sleep(wait)
+    res = requests.post(
+        "https://tmpt.antibotapi.com/tmpt",
+        headers={"x-api-key": api_key},
+        json={"user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html, "anchor_fetched": anchor_fetched},
+        timeout=30,
+    )
+    res.raise_for_status()
+    return base64.b64decode(res.json()["reload"])  # binary protobuf
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+)
+
+// GetReload returns the reload request body as bytes. anchorHTML and anchorFetched come from step 3.
+func GetReload(apiKey, userAgent string, cookies []string, anchorHTML string, anchorFetched int64) ([]byte, error) {
+	time.Sleep(time.Until(time.UnixMilli(anchorFetched + 200)))
+	body, _ := json.Marshal(map[string]any{"user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML, "anchor_fetched": anchorFetched})
+	req, _ := http.NewRequest("POST", "https://tmpt.antibotapi.com/tmpt", bytes.NewReader(body))
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		text, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("tmpt: %d %s", resp.StatusCode, text)
+	}
+	var made struct {
+		Reload string `json:"reload"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&made); err != nil {
+		return nil, err
+	}
+	return base64.StdEncoding.DecodeString(made.Reload) // binary protobuf
+}
+```
+
+</TabItem>
+</Tabs>
 
 | Field | What to send |
 | --- | --- |
