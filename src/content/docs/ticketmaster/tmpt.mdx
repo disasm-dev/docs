@@ -657,6 +657,23 @@ func GetTmpt(client *http.Client, apiKey, userAgent, anchorURL, anchorHTML strin
 </TabItem>
 </Tabs>
 
+## Other Ticketmaster sites
+
+The same flow works on other Ticketmaster sites, such as `www.ticketmaster.nl`, `www.eticketing.co.uk` and
+`web-identity.tmtickets.co.uk`. They use the same site key. Swap `www.ticketmaster.com` for the site's host in these steps:
+
+| Step | Change |
+| --- | --- |
+| 2 | Open a page on the site, then its `/eps-mgr`. |
+| 3 | Set `co` to the site's origin in Base64, for example `https://www.eticketing.co.uk:443` is `aHR0cHM6Ly93d3cuZXRpY2tldGluZy5jby51azo0NDM.`. Set `referer` to the site's origin with a trailing `/`. |
+| 4 | Send the site's cookies that are not `HttpOnly`. |
+| 6 | Post to the site's own `/epsf/gec/v3/pageView`, with `hostname`, `origin` and `referer` from the site. |
+
+<Aside type="caution">
+Some sites post to `/epsf/gec/v3/Event` from their block page. Post to `/pageView` anyway. Our token is made for
+`pageView`, and `/Event` answers `200` without setting `tmpt`.
+</Aside>
+
 ## When it fails
 
 | Status | Cause | What to do |

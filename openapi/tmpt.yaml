@@ -3,7 +3,8 @@ info:
   title: Ticketmaster tmpt
   version: 1.0.0
   description: |
-    Builds the reCAPTCHA Enterprise reload request that earns Ticketmaster's `tmpt` cookie on `www.ticketmaster.com`.
+    Builds the reCAPTCHA Enterprise reload request that earns Ticketmaster's `tmpt` cookie on `www.ticketmaster.com` and
+    other Ticketmaster sites.
 
     You fetch the reCAPTCHA anchor page from your own session and send it to `POST /tmpt`. We return the reload request
     body. You post it to `/reload`, then hand the token to Ticketmaster, which sets `tmpt`. Our API does not not generate
@@ -171,7 +172,8 @@ components:
           items:
             type: string
           description: |
-            The cookies your session holds for `www.ticketmaster.com` that a page script could read (not `HttpOnly`),
+            The cookies your session holds for the Ticketmaster site, such as `www.ticketmaster.com`, that a page script
+            could read (not `HttpOnly`),
             one `name=value` string each. Leave out `tmpt`. Send an empty array if there are none.
         anchor_html:
           type: string
