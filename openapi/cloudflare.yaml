@@ -4,11 +4,11 @@ info:
   version: 1.0.0
   description: |
     Solves Cloudflare's challenge pages (managed, non-interactive and interactive challenges, and Under Attack mode) and
-    Turnstile widgets on a site's own page. We never contact the site or Cloudflare: you make every request yourself, from
-    your own session and proxy, and we tell you which request to make next and with what.
+    Turnstile widgets on a site's own page. You make every request yourself, from your own session and proxy: we give you
+    each request to send, exactly as Chrome would send it, and you hand back what came back.
 
-    Cloudflare is in invite-only beta. A solve is billed once, when it gets through: the challenge's form lets you in, or the
-    widget gives its token. Failed and abandoned solves are free. See the [Cloudflare guide](/cloudflare/overview/).
+    A solve is billed once, when its first `/solves/{id}/next` call succeeds. Starting a solve is free, and so is a solve whose first step fails. See the
+    [Cloudflare guide](/cloudflare/overview/).
 servers:
   - url: https://cf.antibotapi.com
     description: Production
@@ -23,8 +23,8 @@ paths:
       operationId: startSolve
       summary: Start a solve
       description: |
-        Send the page Cloudflare answered with (the `403` challenge page, or a site's page holding a Turnstile widget) and
-        its response headers. Returns the solve's id and the first request to make.
+        Send the address you asked for, the page Cloudflare answered with (the `403` challenge page, or a site's page holding
+        a Turnstile widget), and your client's User-Agent. Returns the solve's id and the first request to send.
       parameters:
         - $ref: '#/components/parameters/Signature'
       requestBody:
@@ -34,15 +34,12 @@ paths:
             schema:
               $ref: '#/components/schemas/StartRequest'
             example:
-              page: https://www.example.com/
+              url: https://www.example.com/
               html: <!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title>...
-              headers:
-                referrer-policy: same-origin
-                cf-mitigated: challenge
-              device: chrome-20261022
+              user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36
       responses:
         '200':
-          description: The solve's id and the first request.
+          description: The solve's id and the first request to send.
           content:
             application/json:
               schema:
@@ -50,18 +47,31 @@ paths:
               example:
                 id: 6f1c2a8e-4b1e-4a37-9c0e-2b9f0f6f3a11
                 request:
-                  kind: PageScript
                   method: GET
                   url: https://www.example.com/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=a4e9cb6aae35e6ac
-                  referer: https://www.example.com/
-                  headers: []
-                  body: null
-                  timeout: 0
-                  wait: 0
-                clear: []
-                done: false
+                  headers:
+                    - ['sec-ch-ua-full-version-list', '"Google Chrome";v="155.0.8059.85", "Chromium";v="155.0.8059.85", "Not(A:Brand";v="24.0.0.0"']
+                    - ['sec-ch-ua-platform', '"Windows"']
+                    - ['sec-ch-ua', '"Google Chrome";v="155", "Chromium";v="155", "Not(A:Brand";v="24"']
+                    - ['user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36']
+                    - ['accept', '*/*']
+                    - ['sec-fetch-site', 'same-origin']
+                    - ['sec-fetch-mode', 'no-cors']
+                    - ['sec-fetch-dest', 'script']
+                    - ['referer', 'https://www.example.com/?__cf_chl_rt_tk=...']
+                    - ['accept-encoding', 'gzip, deflate, br, zstd']
+                    - ['accept-language', 'en-GB,en-US;q=0.9,en;q=0.8']
+                    - ['cookie', '']
+                  wait_ms: 0
+                  timeout_ms: 0
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: |
+            The body is not the JSON this endpoint takes, or no browser we solve as sends your `user_agent` (the body then
+            lists the ones we do under `user_agents`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnknownUserAgent'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -72,12 +82,13 @@ paths:
     post:
       tags: [cloudflare]
       operationId: nextRequest
-      summary: Hand back a response, get the next request
+      summary: Get the next request
       description: |
-        Send what came back from the request the solve asked for last. Returns the next request, or `done: true` once the
-        solve is over: for a challenge page after its form, for a widget with its `token`.
+        Send what came back from the request you were given last, whatever it was. Returns the next request, or `done` once
+        the solve is finished. For a challenge page with `cleared` (its `cf_clearance` cookie is then in your jar), for a widget
+        with its `token`.
 
-        A request you gave up on after its `timeout` goes back as status `0`. A solve not done within 10 minutes is dropped.
+        A request you gave up on after its `timeout_ms` goes back as status `0`. A solve not done within a minute is dropped.
       parameters:
         - name: id
           in: path
@@ -103,34 +114,33 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Turn'
+                $ref: '#/components/schemas/NextResponse'
               examples:
                 next:
                   summary: The next request
                   value:
                     request:
-                      kind: PagePost
                       method: POST
-                      url: https://www.example.com/cdn-cgi/challenge-platform/h/b/flow/ov1/...
-                      referer: https://www.example.com/?__cf_chl_rt_tk=...
+                      url: https://www.example.com/cdn-cgi/challenge-platform/h/b/fo/...
                       headers:
-                        - key: cf-chl
-                          value: a4e9cb6aae35e6ac
-                        - key: content-type
-                          value: text/plain;charset=UTF-8
+                        - ['content-length', '2327']
+                        - ['...', '...']
+                        - ['cf-chl', 'g2bs0gK8vVK4W1vYHMqhaVc9BcPIYvmfveFnhsEsvRc-...']
+                        - ['cookie', '']
+                        - ['priority', 'u=1, i']
                       body: v_a4e9cb6aae35e6ac=...
-                      timeout: 5000
-                      wait: 128
-                    clear: []
-                    token: null
-                    done: false
+                      wait_ms: 128
+                      timeout_ms: 5000
+                cleared:
+                  summary: A challenge page, cleared
+                  value:
+                    done: true
+                    cleared: true
                 widget:
                   summary: A widget's token
                   value:
-                    request: null
-                    clear: []
-                    token: 0.Ab3dEf...
                     done: true
+                    token: 0.Ab3dEf...
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -168,8 +178,8 @@ components:
             $ref: '#/components/schemas/Error'
     Unsolvable:
       description: |
-        We could not take the next step: a request that did not answer as it should, or a page or script we cannot read.
-        The solve ends; start a new one.
+        We could not take the next step: a response that was not what it should be (a `403` where a `200` was due), or a page
+        or script we cannot read. The solve ends; start a new one.
       content:
         application/json:
           schema:
@@ -185,97 +195,83 @@ components:
   schemas:
     StartRequest:
       type: object
-      required: [page, html, headers, device]
+      required: [url, html, user_agent]
       properties:
-        page:
+        url:
           type: string
           format: uri
           description: The address you asked for, as you asked for it (query and fragment included).
         html:
           type: string
           description: The page's body as it came.
-        headers:
-          type: object
-          additionalProperties:
-            type: string
-          description: The page's response headers. `referrer-policy` decides the Referer of later requests.
-        device:
+        user_agent:
           type: string
-          enum: [chrome-20261022]
-          description: The browser the solve presents as. Make your requests with that browser's TLS and HTTP/2 fingerprint.
+          description: |
+            The User-Agent your client sends, exactly. You must ensure that you are keeping the user-agent consistent
+            and using a matching TLS profile. Any mismatching user-agent or TLS will cause blocks
     StartResponse:
       type: object
-      required: [id, clear, done]
+      required: [id, request]
       properties:
         id:
           type: string
           format: uuid
         request:
-          $ref: '#/components/schemas/ClientRequest'
-        clear:
-          $ref: '#/components/schemas/Clear'
-        done:
-          type: boolean
-    Turn:
+          $ref: '#/components/schemas/Request'
+    NextResponse:
       type: object
-      required: [clear, done]
+      description: Either `request`, or `done` with `cleared` (a challenge page) or `token` (a widget).
       properties:
         request:
-          oneOf:
-            - $ref: '#/components/schemas/ClientRequest'
-            - type: 'null'
-          description: The next request; null once the solve is done.
-        clear:
-          $ref: '#/components/schemas/Clear'
-        token:
-          type: [string, 'null']
-          description: A widget's token, once the solve is done. Post it as the page's form would.
+          $ref: '#/components/schemas/Request'
         done:
           type: boolean
-    ClientRequest:
-      type: object
-      required: [kind, method, url, referer, headers, timeout, wait]
-      properties:
-        kind:
+          const: true
+        cleared:
+          type: boolean
+          description: Whether the challenge page's form let you in. When true, `cf_clearance` is in your cookie jar.
+        token:
           type: string
-          enum: [PageScript, ApiScript, WidgetScript, PagePost, Frame, FramePost, Image, Form]
-          description: |
-            Picks the header block Chrome sends for it: PageScript, ApiScript and WidgetScript are script loads, PagePost and
-            FramePost `fetch`/XHR POSTs, Frame an iframe navigation, Image an image load, Form a top-level form submit.
+          description: The widget's token. Post it as the page's form would.
+    Request:
+      type: object
+      required: [method, url, headers, wait_ms, timeout_ms]
+      description: A request to send exactly as given.
+      properties:
         method:
           type: string
+          enum: [GET, POST]
         url:
           type: string
           format: uri
-        referer:
-          type: string
-          description: The Referer to send ('' for none).
         headers:
           type: array
-          description: The headers the challenge's script sets itself, in order. Add them to the kind's header block.
+          description: |
+            Every header, as `[name, value]`, in the order to send them. Send them as they stand and add none. Fill the
+            `cookie` one, left empty, from your cookie jar for the address (leave it out if you have none for it). Your HTTP
+            library may set `content-length` itself; it is given so you can keep its place.
           items:
-            type: object
-            required: [key, value]
-            properties:
-              key:
-                type: string
-              value:
-                type: string
+            type: array
+            minItems: 2
+            maxItems: 2
+            items:
+              type: string
         body:
-          type: [string, 'null']
-        timeout:
-          type: integer
-          description: Give up after this many ms (0 for no limit) and hand back status 0.
-        wait:
+          type: string
+          description: The body to send, for a POST.
+        wait_ms:
           type: integer
           description: |
             Hold the request this many ms before sending it. Cloudflare refuses an answer that arrives sooner than the work it
             claims could have taken.
-    Clear:
-      type: array
-      items:
-        type: string
-      description: Cookies to delete before making the request.
+        timeout_ms:
+          type: integer
+          description: Give up after this many ms (0 for no limit) and hand back status 0.
+        delete_cookies:
+          type: array
+          items:
+            type: string
+          description: Cookies to delete from your jar for the site before sending this request (the challenge page's own script does).
     Reply:
       type: object
       required: [status, headers, body]
@@ -287,10 +283,22 @@ components:
           type: object
           additionalProperties:
             type: string
+          description: The response's headers, as they came (names in any case; join repeated ones).
         body:
           type: string
           contentEncoding: base64
           description: The response body as it came, Base64.
+    UnknownUserAgent:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        user_agents:
+          type: array
+          items:
+            type: string
+          description: The User-Agents we solve as, when yours is not one of them.
     Problem:
       type: object
       required: [error]

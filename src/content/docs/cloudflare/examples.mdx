@@ -1,0 +1,440 @@
+---
+title: Examples with httpcloak
+description: A whole Cloudflare solve in Python, Go and JavaScript, sending every request with httpcloak.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Each example below runs a whole solve. It fetches the page, decides what it is (see
+[Challenges and blocks](/cloudflare/detect/)), runs [the loop](/cloudflare/overview/#the-loop), then fetches the page
+again with `cf_clearance`. Every request to the site goes through [httpcloak](https://github.com/sardanioss/httpcloak)
+1.7.3 or later, which gives your connections Chrome's TLS and HTTP/2 fingerprint.
+
+Replace `YOUR_API_KEY` and the proxy, and point `PAGE` at the site.
+
+<Aside>
+httpcloak returns response headers as lists of values, `{name: [values]}`, whatever its type hints say. The examples
+join them before handing them back.
+</Aside>
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+import base64
+import time
+from urllib.parse import urlparse
+
+import httpcloak  # pip install "httpcloak>=1.7.3"
+import requests
+
+API = "https://cf.antibotapi.com"
+API_KEY = "YOUR_API_KEY"
+PAGE = "https://www.example.com/"
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+LANGUAGE = "en-GB,en-US;q=0.9,en;q=0.8"
+
+session = httpcloak.Session(
+    preset="chrome-155-windows",
+    proxy="http://user:pass@host:port",
+    http_version="h2",
+    allow_redirects=False,
+)
+
+
+def api(path, body):
+    r = requests.post(API + path, json=body, headers={"x-api-key": API_KEY}, timeout=30)
+    if r.status_code != 200:
+        raise RuntimeError(f"{path}: {r.status_code} {r.text}")
+    return r.json()
+
+
+def flat(headers):
+    """httpcloak's headers ({name: [values]}) as /next takes them: lower-case names, repeated values joined."""
+    return {name.lower(): ", ".join(values) for name, values in headers.items()}
+
+
+def cookie_header(url):
+    """The jar's cookies for an address, as Chrome's Cookie header lists them."""
+    u = urlparse(url)
+    path = u.path or "/"
+    sent = []
+    for c in session.get_cookies():
+        domain = c.domain.lstrip(".")
+        if (u.hostname == domain or u.hostname.endswith("." + domain)) and path.startswith(c.path or "/") \
+                and (u.scheme == "https" or not c.secure):
+            sent.append(c)
+    sent.sort(key=lambda c: -len(c.path or "/"))
+    return "; ".join(f"{c.name}={c.value}" for c in sent)
+
+
+def send(req):
+    """One request we were given, sent as given; what came back, as /next takes it."""
+    for name in req.get("delete_cookies") or []:
+        session.delete_cookie(name)
+    time.sleep(req["wait_ms"] / 1000)
+    headers = []
+    for name, value in req["headers"]:
+        if name == "cookie":
+            value = cookie_header(req["url"])
+            if not value:
+                continue
+        headers.append((name, value))
+    started = time.monotonic()
+    try:
+        r = session.request(req["method"], req["url"], data=req.get("body"), exact_headers=headers,
+                            timeout=req["timeout_ms"] / 1000 or None)
+    except httpcloak.HTTPCloakError:
+        if req["timeout_ms"] and time.monotonic() - started >= req["timeout_ms"] / 1000:
+            return {"status": 0, "headers": {}, "body": ""}
+        raise
+    return {
+        "status": r.status_code,
+        "headers": flat(r.headers),
+        "body": base64.b64encode(r.content).decode(),
+    }
+
+
+def solve(url, html):
+    turn = api("/solves", {"url": url, "html": html, "user_agent": UA})
+    solve_id, req = turn["id"], turn["request"]
+    while True:
+        turn = api(f"/solves/{solve_id}/next", send(req))
+        if turn.get("done"):
+            return turn
+        req = turn["request"]
+
+
+r = session.get(PAGE, headers={"accept-language": LANGUAGE})
+
+if flat(r.headers).get("cf-mitigated") == "challenge":
+    result = solve(PAGE, r.text)
+    if not result["cleared"]:
+        raise RuntimeError("Cloudflare challenged again: check the client and the proxy")
+    r = session.get(PAGE, headers={"accept-language": LANGUAGE})
+    print(r.status_code, "with cf_clearance")
+elif "challenges.cloudflare.com/turnstile/v0/api.js" in r.text:
+    token = solve(PAGE, r.text)["token"]
+    print("cf-turnstile-response:", token)  # post it with the page's form
+elif r.status_code in (403, 429):
+    raise RuntimeError("Blocked: not a challenge, see the error code on the page")
+else:
+    print(r.status_code, "no challenge")
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/sardanioss/httpcloak" // go get github.com/sardanioss/httpcloak@v1.7.3
+	"github.com/sardanioss/httpcloak/fingerprint"
+)
+
+const (
+	api      = "https://cf.antibotapi.com"
+	apiKey   = "YOUR_API_KEY"
+	page     = "https://www.example.com/"
+	ua       = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+	language = "en-GB,en-US;q=0.9,en;q=0.8"
+)
+
+type request struct {
+	Method        string      `json:"method"`
+	URL           string      `json:"url"`
+	Headers       [][2]string `json:"headers"`
+	Body          *string     `json:"body"`
+	WaitMs        int         `json:"wait_ms"`
+	TimeoutMs     int         `json:"timeout_ms"`
+	DeleteCookies []string    `json:"delete_cookies"`
+}
+
+type turn struct {
+	ID      string   `json:"id"`
+	Request *request `json:"request"`
+	Done    bool     `json:"done"`
+	Cleared bool     `json:"cleared"`
+	Token   string   `json:"token"`
+}
+
+type reply struct {
+	Status  int               `json:"status"`
+	Headers map[string]string `json:"headers"`
+	Body    string            `json:"body"`
+}
+
+func call(path string, in any) (turn, error) {
+	body, _ := json.Marshal(in)
+	req, _ := http.NewRequest("POST", api+path, bytes.NewReader(body))
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("x-api-key", apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return turn{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		var problem struct{ Error string }
+		json.NewDecoder(resp.Body).Decode(&problem)
+		return turn{}, fmt.Errorf("%s: %d %s", path, resp.StatusCode, problem.Error)
+	}
+	var out turn
+	return out, json.NewDecoder(resp.Body).Decode(&out)
+}
+
+// cookieHeader is the jar's cookies for an address, as Chrome's Cookie header lists them.
+func cookieHeader(s *httpcloak.Session, address string) string {
+	u, _ := url.Parse(address)
+	path := u.Path
+	if path == "" {
+		path = "/"
+	}
+	var sent []httpcloak.CookieInfo
+	for _, c := range s.GetCookies() {
+		domain, cpath := strings.TrimPrefix(c.Domain, "."), c.Path
+		if cpath == "" {
+			cpath = "/"
+		}
+		if (u.Hostname() == domain || strings.HasSuffix(u.Hostname(), "."+domain)) && strings.HasPrefix(path, cpath) &&
+			(u.Scheme == "https" || !c.Secure) {
+			sent = append(sent, c)
+		}
+	}
+	sort.SliceStable(sent, func(i, j int) bool { return len(sent[i].Path) > len(sent[j].Path) })
+	pairs := make([]string, len(sent))
+	for i, c := range sent {
+		pairs[i] = c.Name + "=" + c.Value
+	}
+	return strings.Join(pairs, "; ")
+}
+
+// send makes one request we were given, as given, and returns what came back, as /next takes it.
+func send(ctx context.Context, s *httpcloak.Session, r *request) (reply, error) {
+	for _, name := range r.DeleteCookies {
+		s.DeleteCookie(name, "")
+	}
+	time.Sleep(time.Duration(r.WaitMs) * time.Millisecond)
+	var headers []fingerprint.HeaderPair
+	for _, h := range r.Headers {
+		name, value := h[0], h[1]
+		if name == "cookie" {
+			if value = cookieHeader(s, r.URL); value == "" {
+				continue
+			}
+		}
+		headers = append(headers, fingerprint.HeaderPair{Key: name, Value: value})
+	}
+	timeout := time.Duration(r.TimeoutMs) * time.Millisecond
+	req := &httpcloak.Request{Method: r.Method, URL: r.URL, ExactHeaders: headers, Timeout: timeout}
+	if r.Body != nil {
+		req.Body = strings.NewReader(*r.Body)
+	}
+	started := time.Now()
+	resp, err := s.Do(ctx, req)
+	if err != nil {
+		if timeout > 0 && time.Since(started) >= timeout {
+			return reply{Status: 0, Headers: map[string]string{}}, nil
+		}
+		return reply{}, err
+	}
+	defer resp.Close()
+	body, err := resp.Bytes()
+	if err != nil {
+		return reply{}, err
+	}
+	out := reply{Status: resp.StatusCode, Headers: map[string]string{}, Body: base64.StdEncoding.EncodeToString(body)}
+	for name, values := range resp.Headers {
+		out.Headers[strings.ToLower(name)] = strings.Join(values, ", ")
+	}
+	return out, nil
+}
+
+func solve(ctx context.Context, s *httpcloak.Session, address, html string) (turn, error) {
+	t, err := call("/solves", map[string]string{"url": address, "html": html, "user_agent": ua})
+	if err != nil {
+		return t, err
+	}
+	id := t.ID
+	for !t.Done {
+		back, err := send(ctx, s, t.Request)
+		if err != nil {
+			return t, err
+		}
+		if t, err = call("/solves/"+id+"/next", back); err != nil {
+			return t, err
+		}
+	}
+	return t, nil
+}
+
+func load(ctx context.Context, s *httpcloak.Session) (*httpcloak.Response, string, error) {
+	resp, err := s.Do(ctx, &httpcloak.Request{Method: "GET", URL: page, Headers: map[string][]string{"accept-language": {language}}})
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Close()
+	html, err := resp.Text()
+	return resp, html, err
+}
+
+func main() {
+	ctx := context.Background()
+	s := httpcloak.NewSession("chrome-155-windows",
+		httpcloak.WithSessionProxy("http://user:pass@host:port"),
+		httpcloak.WithForceHTTP2(),
+		httpcloak.WithoutRedirects(),
+	)
+	defer s.Close()
+
+	resp, html, err := load(ctx, s)
+	if err != nil {
+		panic(err)
+	}
+	mitigated := ""
+	for name, values := range resp.Headers {
+		if strings.EqualFold(name, "cf-mitigated") && len(values) > 0 {
+			mitigated = values[0]
+		}
+	}
+
+	switch {
+	case mitigated == "challenge":
+		result, err := solve(ctx, s, page, html)
+		if err != nil {
+			panic(err)
+		}
+		if !result.Cleared {
+			panic(errors.New("cloudflare challenged again: check the client and the proxy"))
+		}
+		resp, _, err = load(ctx, s)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(resp.StatusCode, "with cf_clearance")
+	case strings.Contains(html, "challenges.cloudflare.com/turnstile/v0/api.js"):
+		result, err := solve(ctx, s, page, html)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println("cf-turnstile-response:", result.Token) // post it with the page's form
+	case resp.StatusCode == 403 || resp.StatusCode == 429:
+		panic(errors.New("blocked: not a challenge, see the error code on the page"))
+	default:
+		fmt.Println(resp.StatusCode, "no challenge")
+	}
+}
+```
+
+</TabItem>
+<TabItem label="JavaScript">
+
+```js
+import httpcloak from 'httpcloak'; // npm install httpcloak@^1.7.3
+
+const API = 'https://cf.antibotapi.com';
+const API_KEY = 'YOUR_API_KEY';
+const PAGE = 'https://www.example.com/';
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36';
+const LANGUAGE = 'en-GB,en-US;q=0.9,en;q=0.8';
+
+const session = new httpcloak.Session({
+  preset: 'chrome-155-windows',
+  proxy: 'http://user:pass@host:port',
+  httpVersion: 'h2',
+  allowRedirects: false,
+});
+
+async function api(path, body) {
+  const res = await fetch(API + path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': API_KEY },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${path}: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+// The jar's cookies for an address, as Chrome's Cookie header lists them.
+function cookieHeader(address) {
+  const u = new URL(address);
+  return session.getCookies()
+    .filter((c) => {
+      const domain = c.domain.replace(/^\./, '');
+      return (u.hostname === domain || u.hostname.endsWith('.' + domain))
+        && u.pathname.startsWith(c.path || '/')
+        && (u.protocol === 'https:' || !c.secure);
+    })
+    .sort((a, b) => (b.path || '/').length - (a.path || '/').length)
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+}
+
+// httpcloak's headers ({name: [values]}) as /next takes them: lower-case names, repeated values joined.
+const flat = (headers) => Object.fromEntries(Object.entries(headers).map(([name, values]) => [name.toLowerCase(), [].concat(values).join(', ')]));
+
+// One request we were given, sent as given; what came back, as /next takes it.
+async function send(req) {
+  for (const name of req.delete_cookies ?? []) session.deleteCookie(name);
+  await new Promise((resolve) => setTimeout(resolve, req.wait_ms));
+  const headers = [];
+  for (const [name, value] of req.headers) {
+    const sent = name === 'cookie' ? cookieHeader(req.url) : value;
+    if (name !== 'cookie' || sent) headers.push([name, sent]);
+  }
+  const signal = req.timeout_ms ? AbortSignal.timeout(req.timeout_ms) : undefined;
+  try {
+    const res = await session.request(req.method, req.url, { body: req.body ?? undefined, exactHeaders: headers, signal });
+    return { status: res.statusCode, headers: flat(res.headers), body: res.body.toString('base64') };
+  } catch (error) {
+    if (signal?.aborted) return { status: 0, headers: {}, body: '' };
+    throw error;
+  }
+}
+
+async function solve(url, html) {
+  let turn = await api('/solves', { url, html, user_agent: UA });
+  const id = turn.id;
+  while (!turn.done) turn = await api(`/solves/${id}/next`, await send(turn.request));
+  return turn;
+}
+
+const load = () => session.get(PAGE, { headers: { 'accept-language': LANGUAGE } });
+
+let res = await load();
+if (flat(res.headers)['cf-mitigated'] === 'challenge') {
+  const { cleared } = await solve(PAGE, res.text);
+  if (!cleared) throw new Error('Cloudflare challenged again: check the client and the proxy');
+  res = await load();
+  console.log(res.statusCode, 'with cf_clearance');
+} else if (res.text.includes('challenges.cloudflare.com/turnstile/v0/api.js')) {
+  const { token } = await solve(PAGE, res.text);
+  console.log('cf-turnstile-response:', token); // post it with the page's form
+} else if (res.statusCode === 403 || res.statusCode === 429) {
+  throw new Error('Blocked: not a challenge, see the error code on the page');
+} else {
+  console.log(res.statusCode, 'no challenge');
+}
+session.close();
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="caution">
+Keep one session for the whole solve and for what you do after it. A new session means a new connection and an empty
+jar, and `cf_clearance` only works with the client, proxy and User-Agent.
+</Aside>

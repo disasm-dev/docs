@@ -1,0 +1,98 @@
+---
+title: Challenges and blocks
+description: How to tell a Cloudflare challenge from a block or a Turnstile widget, what each one means, and what to do.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Every response from a site behind Cloudflare has a `server: cloudflare` header and a `cf-ray` header, the site's own
+pages included. Check the response in this order:
+
+| You see | It is | What to do |
+| --- | --- | --- |
+| A `cf-mitigated: challenge` header | A [challenge page](#challenge-pages) | Solve it: `POST /solves` with the page |
+| A `403` or `429` saying `Error 1020` (or another `10xx` code) and no `cf-mitigated` | A [block](#blocks) | Do not solve. Change what was blocked |
+| A `200` page that loads `challenges.cloudflare.com/turnstile/v0/api.js` | A [Turnstile widget](#turnstile-widgets) | Solve it when you need its token |
+| A `5xx` such as `520` to `526`, on a Cloudflare error page | The site is down or unreachable | Retry later. It is not anti-bot |
+| Anything else | The site | Carry on |
+
+Blocks are `403`s too, so go by the `cf-mitigated` header rather than the status.
+
+## Challenge pages
+
+A challenge page is the "Just a moment..." page. Its inline script puts `window._cf_chl_opt` on the page, with a `cType`
+naming the challenge, and loads Cloudflare's orchestrate script from `/cdn-cgi/challenge-platform/.../orchestrate/...`
+on the site's own domain.
+
+| `cType` | Where it comes from | What a browser sees |
+| --- | --- | --- |
+| `managed` | A *Managed Challenge* rule, Bot Fight Mode, or Under Attack mode | Usually nothing: the checks run and the page reloads. If Cloudflare is unsure, a "Verify you are human" checkbox |
+| `non-interactive` | A *JS Challenge* rule | The checks run, never a checkbox |
+| `interactive` | An *Interactive Challenge* rule | Always the checkbox |
+
+Every challenge page answers `403` with `cf-mitigated: challenge`, and we solve all three types.
+
+Send the page to [`POST /solves`](/cloudflare/overview/#the-loop) exactly as it came, with the address you asked for. If
+there is a checkbox, the solve clicks it, which adds one request to the loop.
+
+### When it is done
+
+- **`cleared: true`.** Your jar holds `cf_clearance` for the site's domain. Request the page again, and keep sending
+  the cookie. It only works with the same User-Agent and proxy, from a client with the same fingerprint. It lasts as
+  long as the site set its *Challenge Passage* to (30 minutes by default). After that, you get a new challenge.
+- **`cleared: false`.** Cloudflare took the answer and challenged again. The cause is usually the session: a
+  client that does not look like Chrome (see [Match a real browser](/start/fingerprinting/)), or a proxy with a
+  bad reputation. Request the page again and solve the new challenge. If it keeps happening, change the proxy.
+- **A `422` from us.** A response was not what the challenge expected, most often a `403` from Cloudflare mid-solve.
+  The solve is over. Start a new one from a fresh page.
+
+<Aside type="tip">
+An API call (a `fetch` or XHR request) can also get the challenge, as a `403` with `cf-mitigated: challenge`. Browsers
+solve challenges only on page loads. So load a page of the site, solve that, and retry the call with `cf_clearance` in
+your jar.
+</Aside>
+
+## Blocks
+
+A block refuses the request outright, and no solve gets past it. The page says `Access denied` or similar
+with an error code: `Error 1020` on an HTML page, or `error code: 1020` as plain text for other requests. There is no
+`cf-mitigated` header.
+
+| Code | Status | Meaning | What to change |
+| --- | --- | --- | --- |
+| `1020` | `403` | The request matched one of the site's firewall rules | Whatever the rule matched: the path, a header, the country or the IP. Compare your request with Chrome's |
+| `1015` | `429` | You are rate limited | Slow down, or spread requests over more IPs |
+| `1010` | `403` | The site bans your client's signature | Your client: see [Match a real browser](/start/fingerprinting/) |
+| `1009` | `403` | The site does not allow your country | A proxy in another country |
+| `1006`, `1007`, `1008` | `403` | Your IP is banned | A different IP |
+| `1005` | `403` | Your network (ASN) is banned | A proxy from another provider, often residential |
+| `1012` | `403` | The site owner denies you access | A different IP, or contact the site |
+
+<Aside type="caution">
+Never send a block page to `POST /solves`. It is not a challenge, and the solve answers `422`.
+</Aside>
+
+## Turnstile widgets
+
+A site puts a Turnstile widget on its own page, often a login, sign-up or checkout form, and checks its token on submit.
+The page itself answers `200`, and nothing is blocked until you submit without a token.
+
+A page has a widget when it loads `https://challenges.cloudflare.com/turnstile/v0/api.js`, and either:
+
+- **Renders it implicitly:** an element with class `cf-turnstile` (or `cf-challenge`) and a `data-sitekey`, such as
+  `<div class="cf-turnstile" data-sitekey="0x4AAAAAAA...">`.
+- **Renders it explicitly:** api.js loaded with `?render=explicit&onload=someFunction`, where the page's `someFunction`
+  calls `turnstile.render(...)`.
+
+Send that page to `POST /solves` as it came. The solve ends with `token`. Submit it as the form would, usually as the
+`cf-turnstile-response` field, unless the page names another (`data-response-field-name`). A token works once, within
+300 seconds.
+
+The site picks a widget mode for its sitekey (*managed*, *non-interactive* or *invisible*), and renders it implicitly or
+explicitly. We solve every combination.
+
+<Aside>
+We read the widget from the HTML you send. api.js must be loaded in that HTML, along with the container (implicit) or
+the `onload` function (explicit). A page that adds the widget later from its own JavaScript bundle cannot be read: we
+answer `422`.
+</Aside>

@@ -19,6 +19,11 @@ const specs = [
 export default defineConfig({
 	site: 'https://docs.disasm.dev',
 	integrations: [
+		// starlight-openapi reads the specs once, as the server starts: restart the dev server when one changes.
+		{
+			name: 'watch-openapi-specs',
+			hooks: { 'astro:config:setup': ({ addWatchFile }) => specs.forEach(({ schema }) => addWatchFile(new URL(schema, import.meta.url))) },
+		},
 		starlight({
 			title: 'disasm.dev',
 			description: 'Request-based anti-bot solving API for DataDome, Incapsula, Kasada, Cloudflare, Ticketmaster and Amazon.',
@@ -59,7 +64,7 @@ export default defineConfig({
 					badge: { text: 'Beta', variant: 'caution' },
 					items: ['kasada/overview', 'kasada/payload', 'kasada/proof-of-work'],
 				},
-				{ label: 'Cloudflare', badge: { text: 'Beta', variant: 'caution' }, items: ['cloudflare/overview'] },
+				{ label: 'Cloudflare', badge: { text: 'Beta', variant: 'caution' }, items: ['cloudflare/overview', 'cloudflare/detect', 'cloudflare/examples'] },
 				{ label: 'Ticketmaster', items: ['ticketmaster/tmpt'] },
 				{ label: 'Amazon', items: ['amazon/metadata1'] },
 				{ label: 'Account', items: ['account/developer-api'] },
