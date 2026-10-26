@@ -23,7 +23,7 @@ Check the HTTP status first. Not every response body has a `success` field.
 
 ## Error bodies
 
-Kasada, Ticketmaster and key errors on Incapsula:
+Kasada, Ticketmaster and key errors on Incapsula and Cloudflare:
 
 ```json
 { "success": false, "error": { "type": "validation", "message": "x-api-key is required" } }
@@ -33,6 +33,12 @@ DataDome and Incapsula utmvc:
 
 ```json
 { "success": false, "error": "site is not whitelisted for this service" }
+```
+
+Cloudflare's own errors (`400`, `422`, `503`):
+
+```json
+{ "error": "Expected the PageScript request to answer 200, it answered 403" }
 ```
 
 Incapsula reese84 and Amazon metadata1:
@@ -50,6 +56,7 @@ You pay for a request only when it answers `200`. Refused and failed requests co
 | DataDome | `/interstitial`, `/captcha`, `/tags` | `/get-ip` |
 | Incapsula | `/reese84`, `/utmvc` | |
 | Kasada | `/tl` | `/cd` |
+| Cloudflare | A solve that gets through (once, on its last `/solves/{id}/next`) | Every other call, and solves that fail or are abandoned |
 | Ticketmaster | `/tmpt` | `/config` |
 | Amazon | `/metadata1` | |
 

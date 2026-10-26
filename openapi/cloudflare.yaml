@@ -1,0 +1,315 @@
+openapi: 3.1.0
+info:
+  title: Cloudflare
+  version: 1.0.0
+  description: |
+    Solves Cloudflare's challenge pages (managed, non-interactive and interactive challenges, and Under Attack mode) and
+    Turnstile widgets on a site's own page. We never contact the site or Cloudflare: you make every request yourself, from
+    your own session and proxy, and we tell you which request to make next and with what.
+
+    Cloudflare is in invite-only beta. A solve is billed once, when it gets through: the challenge's form lets you in, or the
+    widget gives its token. Failed and abandoned solves are free. See the [Cloudflare guide](/cloudflare/overview/).
+servers:
+  - url: https://cf.antibotapi.com
+    description: Production
+security:
+  - ApiKey: []
+tags:
+  - name: cloudflare
+paths:
+  /solves:
+    post:
+      tags: [cloudflare]
+      operationId: startSolve
+      summary: Start a solve
+      description: |
+        Send the page Cloudflare answered with (the `403` challenge page, or a site's page holding a Turnstile widget) and
+        its response headers. Returns the solve's id and the first request to make.
+      parameters:
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartRequest'
+            example:
+              page: https://www.example.com/
+              html: <!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title>...
+              headers:
+                referrer-policy: same-origin
+                cf-mitigated: challenge
+              device: chrome-20261022
+      responses:
+        '200':
+          description: The solve's id and the first request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartResponse'
+              example:
+                id: 6f1c2a8e-4b1e-4a37-9c0e-2b9f0f6f3a11
+                request:
+                  kind: PageScript
+                  method: GET
+                  url: https://www.example.com/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=a4e9cb6aae35e6ac
+                  referer: https://www.example.com/
+                  headers: []
+                  body: null
+                  timeout: 0
+                  wait: 0
+                clear: []
+                done: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unsolvable'
+        '503':
+          $ref: '#/components/responses/Busy'
+  /solves/{id}/next:
+    post:
+      tags: [cloudflare]
+      operationId: nextRequest
+      summary: Hand back a response, get the next request
+      description: |
+        Send what came back from the request the solve asked for last. Returns the next request, or `done: true` once the
+        solve is over: for a challenge page after its form, for a widget with its `token`.
+
+        A request you gave up on after its `timeout` goes back as status `0`. A solve not done within 10 minutes is dropped.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Reply'
+            example:
+              status: 200
+              headers:
+                content-type: application/javascript; charset=UTF-8
+              body: <base64 of the response body>
+      responses:
+        '200':
+          description: The next request, or the end of the solve.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Turn'
+              examples:
+                next:
+                  summary: The next request
+                  value:
+                    request:
+                      kind: PagePost
+                      method: POST
+                      url: https://www.example.com/cdn-cgi/challenge-platform/h/b/flow/ov1/...
+                      referer: https://www.example.com/?__cf_chl_rt_tk=...
+                      headers:
+                        - key: cf-chl
+                          value: a4e9cb6aae35e6ac
+                        - key: content-type
+                          value: text/plain;charset=UTF-8
+                      body: v_a4e9cb6aae35e6ac=...
+                      timeout: 5000
+                      wait: 128
+                    clear: []
+                    token: null
+                    done: false
+                widget:
+                  summary: A widget's token
+                  value:
+                    request: null
+                    clear: []
+                    token: 0.Ab3dEf...
+                    done: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: No such solve for your key (it ended, expired, or was started by another key).
+        '422':
+          $ref: '#/components/responses/Unsolvable'
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+  parameters:
+    Signature:
+      name: x-signature
+      in: header
+      required: false
+      description: Required when request signing is on for your key. See [Authentication](/start/authentication/).
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: The body is not the JSON this endpoint takes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: No key, an unknown key, a key out of balance, or a key not on the beta.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unsolvable:
+      description: |
+        We could not take the next step: a request that did not answer as it should, or a page or script we cannot read.
+        The solve ends; start a new one.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            error: Expected the PageScript request to answer 200, it answered 403
+    Busy:
+      description: Too many solves in progress. Retry shortly.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    StartRequest:
+      type: object
+      required: [page, html, headers, device]
+      properties:
+        page:
+          type: string
+          format: uri
+          description: The address you asked for, as you asked for it (query and fragment included).
+        html:
+          type: string
+          description: The page's body as it came.
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: The page's response headers. `referrer-policy` decides the Referer of later requests.
+        device:
+          type: string
+          enum: [chrome-20261022]
+          description: The browser the solve presents as. Make your requests with that browser's TLS and HTTP/2 fingerprint.
+    StartResponse:
+      type: object
+      required: [id, clear, done]
+      properties:
+        id:
+          type: string
+          format: uuid
+        request:
+          $ref: '#/components/schemas/ClientRequest'
+        clear:
+          $ref: '#/components/schemas/Clear'
+        done:
+          type: boolean
+    Turn:
+      type: object
+      required: [clear, done]
+      properties:
+        request:
+          oneOf:
+            - $ref: '#/components/schemas/ClientRequest'
+            - type: 'null'
+          description: The next request; null once the solve is done.
+        clear:
+          $ref: '#/components/schemas/Clear'
+        token:
+          type: [string, 'null']
+          description: A widget's token, once the solve is done. Post it as the page's form would.
+        done:
+          type: boolean
+    ClientRequest:
+      type: object
+      required: [kind, method, url, referer, headers, timeout, wait]
+      properties:
+        kind:
+          type: string
+          enum: [PageScript, ApiScript, WidgetScript, PagePost, Frame, FramePost, Image, Form]
+          description: |
+            Picks the header block Chrome sends for it: PageScript, ApiScript and WidgetScript are script loads, PagePost and
+            FramePost `fetch`/XHR POSTs, Frame an iframe navigation, Image an image load, Form a top-level form submit.
+        method:
+          type: string
+        url:
+          type: string
+          format: uri
+        referer:
+          type: string
+          description: The Referer to send ('' for none).
+        headers:
+          type: array
+          description: The headers the challenge's script sets itself, in order. Add them to the kind's header block.
+          items:
+            type: object
+            required: [key, value]
+            properties:
+              key:
+                type: string
+              value:
+                type: string
+        body:
+          type: [string, 'null']
+        timeout:
+          type: integer
+          description: Give up after this many ms (0 for no limit) and hand back status 0.
+        wait:
+          type: integer
+          description: |
+            Hold the request this many ms before sending it. Cloudflare refuses an answer that arrives sooner than the work it
+            claims could have taken.
+    Clear:
+      type: array
+      items:
+        type: string
+      description: Cookies to delete before making the request.
+    Reply:
+      type: object
+      required: [status, headers, body]
+      properties:
+        status:
+          type: integer
+          description: The response's status, or 0 for a request you gave up on.
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        body:
+          type: string
+          contentEncoding: base64
+          description: The response body as it came, Base64.
+    Problem:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    Error:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          const: false
+        error:
+          type: object
+          required: [type, message]
+          properties:
+            type:
+              type: string
+            message:
+              type: string
+              description: What went wrong.

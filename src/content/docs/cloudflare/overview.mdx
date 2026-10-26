@@ -1,0 +1,69 @@
+---
+title: Cloudflare overview
+sidebar:
+  label: Overview
+description: How a Cloudflare solve works, what you send us and what you send Cloudflare.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+<Aside type="note" title="Invite-only beta">
+Apply from the [dashboard](https://dashboard.disasm.dev). A solve is billed once, when it gets through; failed and
+abandoned solves are free.
+</Aside>
+
+Cloudflare protects a site in two ways we solve:
+
+- A **challenge page**: the `403` "Just a moment..." page of a managed, non-interactive or interactive challenge, or Under
+  Attack mode. Getting through sets the `cf_clearance` cookie.
+- A **Turnstile widget** on the site's own page, rendered by Cloudflare's `api.js` or by the page itself. Getting through
+  gives a token the page's form posts.
+
+A solve is a loop. You send us the page; we answer with the next request to make. You make it, send us what came back, and
+get the next one, until the solve is done. You make every request yourself, from your own session and proxy: we never
+contact the site or Cloudflare.
+
+Base URL: `https://cf.antibotapi.com`. Chrome on Windows only (`device: chrome-20261022`).
+
+## The loop
+
+<Steps>
+
+1. Request the site and get the challenge page (or the page with the widget).
+2. **`POST /solves`** with the address, the page's HTML and its response headers. Keep the `id`.
+3. Make the `request` it returns: delete the cookies in `clear`, wait `wait` ms, then send it with the header block for its
+   `kind`, its `referer` and its `headers`, giving up after `timeout` ms.
+4. **`POST /solves/{id}/next`** with the status, headers and body (Base64) that came back. Status `0` if you gave up.
+5. Repeat 3–4 until `done` is `true`.
+
+</Steps>
+
+A challenge page ends with its form: make that last request like the others and keep the `cf_clearance` cookie it sets. A
+widget ends with `token`: post it as the page's form would (its `cf-turnstile-response` field, unless the page names
+another).
+
+<Aside type="caution">
+Honour `wait`. Cloudflare checks when each answer arrives against the work it says it did, and refuses one that comes too
+soon.
+</Aside>
+
+## Making the requests
+
+Send each request as Chrome would, with the TLS and HTTP/2 fingerprint of the `device` you named, and the header block of
+its `kind`:
+
+| `kind` | What Chrome is doing |
+| --- | --- |
+| `PageScript` | Loading the challenge's script on the page |
+| `ApiScript`, `WidgetScript` | Loading Turnstile's `api.js` (`WidgetScript` follows its redirect) |
+| `PagePost`, `FramePost` | A `fetch` POST from the page or from the widget's frame |
+| `Frame` | Loading the widget's frame (an iframe navigation) |
+| `Image` | Loading an image |
+| `Form` | Submitting the page's form (a top-level navigation) |
+
+Add the request's own `headers` (such as `cf-chl`) to the block, and send its `referer` as the Referer (none when empty).
+
+## Errors
+
+A `422` means we could not take the next step, usually because a request did not answer as it should (a `403` where a
+`200` was due). The solve is over; start a new one. A `404` on `/next` means the solve has ended or expired.

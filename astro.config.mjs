@@ -10,6 +10,7 @@ const specs = [
 	{ base: 'api/datadome', schema: './openapi/datadome.yaml', label: 'DataDome' },
 	{ base: 'api/incapsula', schema: './openapi/incapsula.yaml', label: 'Incapsula' },
 	{ base: 'api/kasada', schema: './openapi/kasada.yaml', label: 'Kasada' },
+	{ base: 'api/cloudflare', schema: './openapi/cloudflare.yaml', label: 'Cloudflare' },
 	{ base: 'api/tmpt', schema: './openapi/tmpt.yaml', label: 'Ticketmaster tmpt' },
 	{ base: 'api/metadata1', schema: './openapi/metadata1.yaml', label: 'Amazon metadata1' },
 	{ base: 'api/developer', schema: './openapi/developer.yaml', label: 'Developer API' },
@@ -20,7 +21,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'disasm.dev',
-			description: 'Request-based anti-bot solving API for DataDome, Incapsula, Kasada, Ticketmaster and Amazon.',
+			description: 'Request-based anti-bot solving API for DataDome, Incapsula, Kasada, Cloudflare, Ticketmaster and Amazon.',
 			logo: { dark: './src/assets/logo-dark.svg', light: './src/assets/logo-light.svg', replacesTitle: true },
 			favicon: '/favicon.svg',
 			customCss: ['./src/styles/theme.css'],
@@ -58,6 +59,7 @@ export default defineConfig({
 					badge: { text: 'Beta', variant: 'caution' },
 					items: ['kasada/overview', 'kasada/payload', 'kasada/proof-of-work'],
 				},
+				{ label: 'Cloudflare', badge: { text: 'Beta', variant: 'caution' }, items: ['cloudflare/overview'] },
 				{ label: 'Ticketmaster', items: ['ticketmaster/tmpt'] },
 				{ label: 'Amazon', items: ['amazon/metadata1'] },
 				{ label: 'Account', items: ['account/developer-api'] },
