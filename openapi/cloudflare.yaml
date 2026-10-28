@@ -267,11 +267,6 @@ components:
         timeout_ms:
           type: integer
           description: Give up after this many ms (0 for no limit) and hand back status 0.
-        delete_cookies:
-          type: array
-          items:
-            type: string
-          description: Cookies to delete from your jar for the site before sending this request (the challenge page's own script does).
     Reply:
       type: object
       required: [status, headers, body]

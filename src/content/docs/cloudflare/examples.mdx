@@ -70,8 +70,6 @@ def cookie_header(url):
 
 def send(req):
     """One request we were given, sent as given; what came back, as /next takes it."""
-    for name in req.get("delete_cookies") or []:
-        session.delete_cookie(name)
     time.sleep(req["wait_ms"] / 1000)
     headers = []
     for name, value in req["headers"]:
@@ -154,13 +152,12 @@ const (
 )
 
 type request struct {
-	Method        string      `json:"method"`
-	URL           string      `json:"url"`
-	Headers       [][2]string `json:"headers"`
-	Body          *string     `json:"body"`
-	WaitMs        int         `json:"wait_ms"`
-	TimeoutMs     int         `json:"timeout_ms"`
-	DeleteCookies []string    `json:"delete_cookies"`
+	Method    string      `json:"method"`
+	URL       string      `json:"url"`
+	Headers   [][2]string `json:"headers"`
+	Body      *string     `json:"body"`
+	WaitMs    int         `json:"wait_ms"`
+	TimeoutMs int         `json:"timeout_ms"`
 }
 
 type turn struct {
@@ -224,9 +221,6 @@ func cookieHeader(s *httpcloak.Session, address string) string {
 
 // send makes one request we were given, as given, and returns what came back, as /next takes it.
 func send(ctx context.Context, s *httpcloak.Session, r *request) (reply, error) {
-	for _, name := range r.DeleteCookies {
-		s.DeleteCookie(name, "")
-	}
 	time.Sleep(time.Duration(r.WaitMs) * time.Millisecond)
 	var headers []fingerprint.HeaderPair
 	for _, h := range r.Headers {
@@ -388,7 +382,6 @@ const flat = (headers) => Object.fromEntries(Object.entries(headers).map(([name,
 
 // One request we were given, sent as given; what came back, as /next takes it.
 async function send(req) {
-  for (const name of req.delete_cookies ?? []) session.deleteCookie(name);
   await new Promise((resolve) => setTimeout(resolve, req.wait_ms));
   const headers = [];
   for (const [name, value] of req.headers) {

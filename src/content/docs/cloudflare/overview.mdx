@@ -36,8 +36,8 @@ Base URL: `https://cf.antibotapi.com`. We solve as Chrome 155 on Windows: send y
 
 1. Request the site and get the challenge page (or the page with the widget).
 2. **`POST /solves`** with the address, the page's HTML and your User-Agent. Keep the `id`.
-3. Take the `request`: delete any `delete_cookies` from your jar, wait `wait_ms`, then send its `method`, `url`, `headers`
-   (in that order, with your cookies in the `cookie` one) and `body`. Give up after `timeout_ms` if it is not 0.
+3. Take the `request`: wait `wait_ms`, then send its `method`, `url`, `headers` (in that order, with your cookies in the
+   `cookie` one) and `body`. Give up after `timeout_ms` if it is not 0.
 4. **`POST /solves/{id}/next`** with the status, headers and body (Base64) that came back, whatever they were. Status `0` if
    you gave up.
 5. Repeat 3–4 until the answer has `done`.
@@ -50,7 +50,6 @@ it as the page's form would (its `cf-turnstile-response` field, unless the page 
 ```js
 let { id, request } = await api('/solves', { url, html, user_agent: UA });
 for (;;) {
-  for (const name of request.delete_cookies ?? []) jar.delete(url, name);
   await sleep(request.wait_ms);
   const res = await send(request.method, request.url, request.headers, request.body, request.timeout_ms);
   const next = await api(`/solves/${id}/next`, { status: res.status, headers: res.headers, body: base64(res.body) });
