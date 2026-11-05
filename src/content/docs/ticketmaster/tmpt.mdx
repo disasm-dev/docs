@@ -25,7 +25,7 @@ Base URL: `https://tmpt.antibotapi.com`
 1. Get the reCAPTCHA version from us (`GET /config`).
 2. Open Ticketmaster's homepage.
 3. Fetch the reCAPTCHA anchor page from Google.
-4. Wait at least 200 ms, then get the reload request from us (`POST /tmpt`).
+4. Get the reload request from us (`POST /tmpt`) as soon as the anchor arrives.
 5. Post the reload request to Google and read the token.
 6. Send the token to Ticketmaster and store `tmpt`.
 
@@ -228,12 +228,9 @@ priority: u=0, i
 
 Chrome adds the `x-browser-*` headers to requests to Google. Copy them from a capture of the same Chrome version.
 
-As soon as the response arrives, record the time with `Date.now()`. That is `anchor_fetched`.
-
 ## 4. Get the reload request from us
 
-Wait at least 200 ms after the anchor arrived: a browser needs that long to run reCAPTCHA, and earlier calls are refused
-with a `400`. Then:
+Call us as soon as the anchor arrives. There is no need to wait: we time the reload from the anchor page itself.
 
 <Tabs syncKey="lang">
 <TabItem label="cURL">
@@ -245,8 +242,7 @@ curl -X POST https://tmpt.antibotapi.com/tmpt \
   -d '{
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
     "cookies": ["LANGUAGE=en-us", "NDMA=200"],
-    "anchor_html": "<the anchor page from step 3>",
-    "anchor_fetched": 1792749801750
+    "anchor_html": "<the anchor page from step 3>"
   }'
 ```
 
@@ -254,14 +250,12 @@ curl -X POST https://tmpt.antibotapi.com/tmpt \
 <TabItem label="JavaScript">
 
 ```js
-// anchorHtml and anchorFetched come from step 3. Returns the reload request body as bytes.
-async function getReload(apiKey, userAgent, cookies, anchorHtml, anchorFetched) {
-  const wait = anchorFetched + 200 - Date.now();
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+// anchorHtml comes from step 3. Returns the reload request body as bytes.
+async function getReload(apiKey, userAgent, cookies, anchorHtml) {
   const res = await fetch('https://tmpt.antibotapi.com/tmpt', {
     method: 'POST',
     headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_agent: userAgent, cookies, anchor_html: anchorHtml, anchor_fetched: anchorFetched }),
+    body: JSON.stringify({ user_agent: userAgent, cookies, anchor_html: anchorHtml }),
   });
   if (!res.ok) throw new Error(`tmpt: ${res.status} ${await res.text()}`);
   return Buffer.from((await res.json()).reload, 'base64'); // binary protobuf
@@ -273,20 +267,16 @@ async function getReload(apiKey, userAgent, cookies, anchorHtml, anchorFetched) 
 
 ```python
 import base64
-import time
 
 import requests
 
 
-def get_reload(api_key: str, user_agent: str, cookies: list[str], anchor_html: str, anchor_fetched: int) -> bytes:
-    """anchor_html and anchor_fetched come from step 3. Returns the reload request body as bytes."""
-    wait = (anchor_fetched + 200) / 1000 - time.time()
-    if wait > 0:
-        time.sleep(wait)
+def get_reload(api_key: str, user_agent: str, cookies: list[str], anchor_html: str) -> bytes:
+    """anchor_html comes from step 3. Returns the reload request body as bytes."""
     res = requests.post(
         "https://tmpt.antibotapi.com/tmpt",
         headers={"x-api-key": api_key},
-        json={"user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html, "anchor_fetched": anchor_fetched},
+        json={"user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html},
         timeout=30,
     )
     res.raise_for_status()
@@ -304,13 +294,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
-// GetReload returns the reload request body as bytes. anchorHTML and anchorFetched come from step 3.
-func GetReload(apiKey, userAgent string, cookies []string, anchorHTML string, anchorFetched int64) ([]byte, error) {
-	time.Sleep(time.Until(time.UnixMilli(anchorFetched + 200)))
-	body, _ := json.Marshal(map[string]any{"user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML, "anchor_fetched": anchorFetched})
+// GetReload returns the reload request body as bytes. anchorHTML comes from step 3.
+func GetReload(apiKey, userAgent string, cookies []string, anchorHTML string) ([]byte, error) {
+	body, _ := json.Marshal(map[string]any{"user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML})
 	req, _ := http.NewRequest("POST", "https://tmpt.antibotapi.com/tmpt", bytes.NewReader(body))
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -341,7 +329,8 @@ func GetReload(apiKey, userAgent string, cookies []string, anchorHTML string, an
 | `user_agent` | Your session's `User-Agent`. |
 | `cookies` | Your `www.ticketmaster.com` cookies that are not `HttpOnly`, as `name=value` strings. Leave out `tmpt`. An empty array is fine. |
 | `anchor_html` | The anchor page exactly as Google sent it. |
-| `anchor_fetched` | The time from step 3, in milliseconds. |
+
+`anchor_fetched` is no longer needed. Older integrations that still send it keep working: we ignore it.
 
 ```json
 { "success": true, "reload": "ChhOaGZkWkh6cmUxNndyYzJtNkJ4RWR1N0..." }
@@ -490,17 +479,15 @@ They use `parseToken` from step 5.
 ```js
 const SITE_KEY = '6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV';
 
-// anchorUrl, anchorHtml and anchorFetched come from step 3. cookies are your non-HttpOnly
+// anchorUrl and anchorHtml come from step 3. cookies are your non-HttpOnly
 // www.ticketmaster.com cookies as name=value strings; cookieHeader is the whole cookie header
 // for www.ticketmaster.com (SID, BID, eps_sid and the rest). Returns the tmpt Set-Cookie line.
-async function getTmpt({ apiKey, userAgent, anchorUrl, anchorHtml, anchorFetched, cookies, cookieHeader }) {
-  // 4. Wait until 200 ms after the anchor arrived, then get the reload request.
-  const wait = anchorFetched + 200 - Date.now();
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+async function getTmpt({ apiKey, userAgent, anchorUrl, anchorHtml, cookies, cookieHeader }) {
+  // 4. Get the reload request as soon as the anchor arrives.
   const made = await fetch('https://tmpt.antibotapi.com/tmpt', {
     method: 'POST',
     headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_agent: userAgent, cookies, anchor_html: anchorHtml, anchor_fetched: anchorFetched }),
+    body: JSON.stringify({ user_agent: userAgent, cookies, anchor_html: anchorHtml }),
   });
   if (!made.ok) throw new Error(`tmpt: ${made.status} ${await made.text()}`);
   const reload = Buffer.from((await made.json()).reload, 'base64'); // binary protobuf
@@ -531,25 +518,21 @@ async function getTmpt({ apiKey, userAgent, anchorUrl, anchorHtml, anchorFetched
 ```python
 import base64
 import json
-import time
 
 import requests
 
 SITE_KEY = "6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV"
 
 
-def get_tmpt(session, api_key, user_agent, anchor_url, anchor_html, anchor_fetched, cookies):
+def get_tmpt(session, api_key, user_agent, anchor_url, anchor_html, cookies):
     """Steps 4-6. session is your Ticketmaster session, holding the cookies from step 2.
-    anchor_url, anchor_html and anchor_fetched come from step 3; cookies are your
+    anchor_url and anchor_html come from step 3; cookies are your
     non-HttpOnly www.ticketmaster.com cookies as name=value strings. Returns tmpt."""
-    # 4. Wait until 200 ms after the anchor arrived, then get the reload request.
-    wait = (anchor_fetched + 200) / 1000 - time.time()
-    if wait > 0:
-        time.sleep(wait)
+    # 4. Get the reload request as soon as the anchor arrives.
     made = requests.post(
         "https://tmpt.antibotapi.com/tmpt",
         headers={"x-api-key": api_key},
-        json={"user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html, "anchor_fetched": anchor_fetched},
+        json={"user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html},
         timeout=30,
     )
     made.raise_for_status()
@@ -586,18 +569,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 const siteKey = "6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV"
 
 // GetTmpt does steps 4-6. client is your Ticketmaster session, with a cookie jar holding the
-// cookies from step 2. anchorURL, anchorHTML and anchorFetched come from step 3; cookies are
+// cookies from step 2. anchorURL and anchorHTML come from step 3; cookies are
 // your non-HttpOnly www.ticketmaster.com cookies as name=value strings.
-func GetTmpt(client *http.Client, apiKey, userAgent, anchorURL, anchorHTML string, anchorFetched int64, cookies []string) (*http.Cookie, error) {
-	// 4. Wait until 200 ms after the anchor arrived, then get the reload request.
-	time.Sleep(time.Until(time.UnixMilli(anchorFetched + 200)))
-	body, _ := json.Marshal(map[string]any{"user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML, "anchor_fetched": anchorFetched})
+func GetTmpt(client *http.Client, apiKey, userAgent, anchorURL, anchorHTML string, cookies []string) (*http.Cookie, error) {
+	// 4. Get the reload request as soon as the anchor arrives.
+	body, _ := json.Marshal(map[string]any{"user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML})
 	req, _ := http.NewRequest("POST", "https://tmpt.antibotapi.com/tmpt", bytes.NewReader(body))
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -678,7 +659,7 @@ Some sites post to `/epsf/gec/v3/Event` from their block page. Post to `/pageVie
 
 | Status | Cause | What to do |
 | --- | --- | --- |
-| `400` | A field is missing or wrong, the user agent is not Chrome 145–155 on Windows, or the call came less than 200 ms after the anchor arrived. The message says which. | Fix it. If your server's clock is ahead of ours, the gap can come out short. |
+| `400` | A field is missing or wrong, the user agent is not Chrome 145–155 on Windows, or the anchor page has expired (it lasts an hour). The message says which. | Fix it, or fetch a fresh anchor page. |
 | `401` | The API key is missing, wrong or out of balance. | Check the key. |
 | `409` | The anchor is from a reCAPTCHA version we do not support yet. | Fetch the anchor with the `version` from `GET /config`. |
 | `501` | This anchor asks for something we cannot build yet. Not billed. | Tell us. |

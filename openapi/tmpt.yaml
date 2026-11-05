@@ -52,8 +52,7 @@ paths:
         Send the anchor page you fetched. Returns the reload request body to post to
         `https://www.google.com/recaptcha/enterprise/reload?k=6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV`.
 
-        Call it at least 200 ms after the anchor page arrived: a browser cannot reload sooner, so an earlier call is
-        refused with a `400`. Each `200` is billed; nothing else is.
+        Call it as soon as the anchor page arrives; there is no need to wait. Each `200` is billed; nothing else is.
       parameters:
         - $ref: '#/components/parameters/Signature'
       requestBody:
@@ -66,7 +65,6 @@ paths:
               user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36
               cookies: [LANGUAGE=en-us, NDMA=200]
               anchor_html: <!DOCTYPE HTML><html dir="ltr" lang="en">...
-              anchor_fetched: 1792749801750
       responses:
         '200':
           description: The reload request body.
@@ -80,8 +78,8 @@ paths:
         '400':
           description: |
             Something in the request is wrong, the message says what the issue is. It could be a field missing or of the wrong type, a user
-            agent that is not Chrome 145–155 on Windows, an anchor page that is not one, or `anchor_fetched` less than
-            200 ms before the request.
+            agent that is not Chrome 145–155 on Windows, an anchor page that is not one, or an anchor page that has
+            expired (it lasts an hour).
           content:
             application/json:
               schema:
@@ -90,7 +88,7 @@ paths:
                 success: false
                 error:
                   type: validation
-                  message: anchor_fetched is 130 ms before this request; no browser makes the reload in under 191 ms
+                  message: The anchor expired 5230 ms ago
         '401':
           $ref: '#/components/responses/Unauthorized'
         '409':
@@ -160,7 +158,7 @@ components:
           description: The reCAPTCHA release. Use it as the anchor URL's `v` parameter.
     TmptRequest:
       type: object
-      required: [user_agent, cookies, anchor_html, anchor_fetched]
+      required: [user_agent, cookies, anchor_html]
       properties:
         user_agent:
           type: string
@@ -181,7 +179,8 @@ components:
         anchor_fetched:
           type: integer
           format: int64
-          description: When the anchor page arrived, in milliseconds since the epoch (`Date.now()` after the response).
+          deprecated: true
+          description: No longer needed, and ignored when sent. We time the reload from the anchor page itself.
     TmptResponse:
       type: object
       required: [success, reload]
