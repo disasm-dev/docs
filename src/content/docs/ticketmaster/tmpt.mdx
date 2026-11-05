@@ -330,8 +330,6 @@ func GetReload(apiKey, userAgent string, cookies []string, anchorHTML string) ([
 | `cookies` | Your `www.ticketmaster.com` cookies that are not `HttpOnly`, as `name=value` strings. Leave out `tmpt`. An empty array is fine. |
 | `anchor_html` | The anchor page exactly as Google sent it. |
 
-`anchor_fetched` is no longer needed. Older integrations that still send it keep working: we ignore it.
-
 ```json
 { "success": true, "reload": "ChhOaGZkWkh6cmUxNndyYzJtNkJ4RWR1N0..." }
 ```

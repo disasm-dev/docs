@@ -176,11 +176,6 @@ components:
         anchor_html:
           type: string
           description: The anchor page HTML
-        anchor_fetched:
-          type: integer
-          format: int64
-          deprecated: true
-          description: No longer needed, and ignored when sent. We time the reload from the anchor page itself.
     TmptResponse:
       type: object
       required: [success, reload]
