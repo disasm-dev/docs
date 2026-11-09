@@ -6,9 +6,9 @@ info:
     Builds the reCAPTCHA Enterprise reload request that earns Ticketmaster's `tmpt` cookie on `www.ticketmaster.com` and
     other Ticketmaster sites.
 
-    You fetch the reCAPTCHA anchor page from your own session and send it to `POST /tmpt`. We return the reload request
-    body. You post it to `/reload`, then hand the token to Ticketmaster, which sets `tmpt`. Our API does not not generate
-    the final tmpt cookie for you.
+    You fetch the reCAPTCHA anchor page from your own session and send it to `POST /tmpt` with the URL of the page it is
+    on. We return the reload request body. You post it to `/reload`, then hand the token to Ticketmaster, which sets
+    `tmpt`. Our API does not not generate the final tmpt cookie for you.
 
     See the [tmpt guide](/ticketmaster/tmpt/) for the full flow.
 servers:
@@ -49,10 +49,13 @@ paths:
       operationId: makeReload
       summary: Build the reload request
       description: |
-        Send the anchor page you fetched. Returns the reload request body to post to
-        `https://www.google.com/recaptcha/enterprise/reload?k=6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV`.
+        Send the anchor page you fetched, the page it is on and the action the token is for. Returns the reload request
+        body to post to `https://www.google.com/recaptcha/enterprise/reload?k=6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV`.
 
         Call it as soon as the anchor page arrives; there is no need to wait. Each `200` is billed; nothing else is.
+
+        We load `page_url` ourselves. The first request for a page we have not seen answers `503` while we load it: ask
+        again after a few seconds.
       parameters:
         - $ref: '#/components/parameters/Signature'
       requestBody:
@@ -62,6 +65,8 @@ paths:
             schema:
               $ref: '#/components/schemas/TmptRequest'
             example:
+              page_url: https://www.ticketmaster.com/
+              action: pageView
               user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36
               cookies: [LANGUAGE=en-us, NDMA=200]
               anchor_html: <!DOCTYPE HTML><html dir="ltr" lang="en">...
@@ -77,9 +82,9 @@ paths:
                 reload: ChhOaGZkWkh6cmUxNndyYzJtNkJ4RWR1N0...
         '400':
           description: |
-            Something in the request is wrong, the message says what the issue is. It could be a field missing or of the wrong type, a user
-            agent that is not Chrome 145–155 on Windows, an anchor page that is not one, or an anchor page that has
-            expired (it lasts an hour).
+            Something in the request is wrong, the message says what the issue is. It could be a field missing or of the wrong type, an
+            `action` that is neither `pageView` nor `Event`, a user agent that is not Chrome 145–155 on Windows, an anchor
+            page that is not one, or an anchor page that has expired (it lasts an hour).
           content:
             application/json:
               schema:
@@ -111,7 +116,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '503':
-          $ref: '#/components/responses/Unavailable'
+          description: |
+            We do not have the page at `page_url` yet, or the service is temporarily unavailable. The first request for a
+            page starts its load: ask again after a few seconds.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                success: false
+                error:
+                  type: unavailable
+                  message: 'No host page for https://www.ticketmaster.com/your-event/event/0123456789ABCDEF yet: its load is queued'
 components:
   securitySchemes:
     ApiKey:
@@ -158,8 +174,21 @@ components:
           description: The reCAPTCHA release. Use it as the anchor URL's `v` parameter.
     TmptRequest:
       type: object
-      required: [user_agent, cookies, anchor_html]
+      required: [page_url, action, user_agent, cookies, anchor_html]
       properties:
+        page_url:
+          type: string
+          format: uri
+          description: |
+            The page your session is on, the one the anchor belongs to: the full URL as the address bar shows it, such
+            as `https://www.ticketmaster.com/`. We load the page ourselves. The first request for a page answers `503`
+            until it has loaded.
+        action:
+          type: string
+          enum: [pageView, Event]
+          description: |
+            What the token is for: `pageView` on a normal page, `Event` on the gate page that answers `401`. Send the
+            token to the matching endpoint, `/epsf/gec/v3/pageView` or `/epsf/gec/v3/Event`.
         user_agent:
           type: string
           description: |

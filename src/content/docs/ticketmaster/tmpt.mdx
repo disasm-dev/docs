@@ -2,7 +2,7 @@
 title: Ticketmaster tmpt
 sidebar:
   label: tmpt
-description: Get Ticketmaster's tmpt cookie by passing its reCAPTCHA Enterprise check on page view.
+description: Get Ticketmaster's tmpt cookie by passing its reCAPTCHA Enterprise check, on a page view or at the gate page.
 ---
 
 import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
@@ -11,6 +11,9 @@ Ticketmaster runs a reCAPTCHA Enterprise check when a page loads and sets the `t
 other protected actions expect a session that has `tmpt`.
 
 We build the reCAPTCHA reload request. You make every request to Ticketmaster and Google yourself, from one session.
+
+Some pages, such as event pages, answer a new session with `401` and a gate page that runs the same check before it
+shows the page. The steps below are for a normal page view. [The gate page](#the-gate-page) lists what changes there.
 
 Base URL: `https://tmpt.antibotapi.com`
 
@@ -23,7 +26,7 @@ Base URL: `https://tmpt.antibotapi.com`
 <Steps>
 
 1. Get the reCAPTCHA version from us (`GET /config`).
-2. Open Ticketmaster's homepage.
+2. Open the page on Ticketmaster.
 3. Fetch the reCAPTCHA anchor page from Google.
 4. Get the reload request from us (`POST /tmpt`) as soon as the anchor arrives.
 5. Post the reload request to Google and read the token.
@@ -107,12 +110,15 @@ The response:
 `version` is the reCAPTCHA release to fetch the anchor with. It changes when Google ships a release, so read it for each
 session. This call is free.
 
-## 2. Open the homepage
+## 2. Open the page
+
+This guide uses the homepage. For another page, use its URL in place of the homepage's here and in steps 4 and 6.
 
 1. GET `https://www.ticketmaster.com/` as a page navigation.
-2. GET `https://www.ticketmaster.com/eps-mgr` as the page's script request, with `referer: https://www.ticketmaster.com/`.
+2. GET `https://www.ticketmaster.com/eps-mgr` as the page's script request, with `referer` set to the page.
 3. Keep every cookie both responses set. You need `SID`, `BID` and `eps_sid` in step 6.
-4. If the homepage answers `403`, Ticketmaster has blocked your proxy. Switch proxy and start again.
+4. If the page answers `403`, Ticketmaster has blocked your proxy. Switch proxy and start again.
+5. If the page answers `401`, it is the gate page. Follow [The gate page](#the-gate-page).
 
 ## 3. Fetch the anchor page
 
@@ -240,6 +246,8 @@ curl -X POST https://tmpt.antibotapi.com/tmpt \
   -H "x-api-key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
+    "page_url": "https://www.ticketmaster.com/",
+    "action": "pageView",
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
     "cookies": ["LANGUAGE=en-us", "NDMA=200"],
     "anchor_html": "<the anchor page from step 3>"
@@ -251,11 +259,11 @@ curl -X POST https://tmpt.antibotapi.com/tmpt \
 
 ```js
 // anchorHtml comes from step 3. Returns the reload request body as bytes.
-async function getReload(apiKey, userAgent, cookies, anchorHtml) {
+async function getReload(apiKey, pageUrl, action, userAgent, cookies, anchorHtml) {
   const res = await fetch('https://tmpt.antibotapi.com/tmpt', {
     method: 'POST',
     headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_agent: userAgent, cookies, anchor_html: anchorHtml }),
+    body: JSON.stringify({ page_url: pageUrl, action, user_agent: userAgent, cookies, anchor_html: anchorHtml }),
   });
   if (!res.ok) throw new Error(`tmpt: ${res.status} ${await res.text()}`);
   return Buffer.from((await res.json()).reload, 'base64'); // binary protobuf
@@ -271,12 +279,12 @@ import base64
 import requests
 
 
-def get_reload(api_key: str, user_agent: str, cookies: list[str], anchor_html: str) -> bytes:
+def get_reload(api_key: str, page_url: str, action: str, user_agent: str, cookies: list[str], anchor_html: str) -> bytes:
     """anchor_html comes from step 3. Returns the reload request body as bytes."""
     res = requests.post(
         "https://tmpt.antibotapi.com/tmpt",
         headers={"x-api-key": api_key},
-        json={"user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html},
+        json={"page_url": page_url, "action": action, "user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html},
         timeout=30,
     )
     res.raise_for_status()
@@ -297,8 +305,8 @@ import (
 )
 
 // GetReload returns the reload request body as bytes. anchorHTML comes from step 3.
-func GetReload(apiKey, userAgent string, cookies []string, anchorHTML string) ([]byte, error) {
-	body, _ := json.Marshal(map[string]any{"user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML})
+func GetReload(apiKey, pageURL, action, userAgent string, cookies []string, anchorHTML string) ([]byte, error) {
+	body, _ := json.Marshal(map[string]any{"page_url": pageURL, "action": action, "user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML})
 	req, _ := http.NewRequest("POST", "https://tmpt.antibotapi.com/tmpt", bytes.NewReader(body))
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -326,9 +334,15 @@ func GetReload(apiKey, userAgent string, cookies []string, anchorHTML string) ([
 
 | Field | What to send |
 | --- | --- |
+| `page_url` | The page you opened in step 2, as the address bar shows it. |
+| `action` | `pageView` for a normal page, `Event` for [the gate page](#the-gate-page). It names the endpoint the token goes to in step 6. |
 | `user_agent` | Your session's `User-Agent`. |
 | `cookies` | Your `www.ticketmaster.com` cookies that are not `HttpOnly`, as `name=value` strings. Leave out `tmpt`. An empty array is fine. |
 | `anchor_html` | The anchor page exactly as Google sent it. |
+
+We load `page_url` ourselves. The first request for a page we have not seen answers `503` while we load it: ask again
+every few seconds until it answers `200`. We keep a page for 6 hours after the last request for it.
+`https://www.ticketmaster.com/` is always loaded.
 
 ```json
 { "success": true, "reload": "ChhOaGZkWkh6cmUxNndyYzJtNkJ4RWR1N0..." }
@@ -440,6 +454,8 @@ func ParseToken(body []byte) (string, error) {
 
 ## 6. Send the token to Ticketmaster
 
+Post it to the endpoint you named in `action`, here `/epsf/gec/v3/pageView`:
+
 ```http
 POST /epsf/gec/v3/pageView HTTP/2
 host: www.ticketmaster.com
@@ -477,15 +493,15 @@ They use `parseToken` from step 5.
 ```js
 const SITE_KEY = '6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV';
 
-// anchorUrl and anchorHtml come from step 3. cookies are your non-HttpOnly
-// www.ticketmaster.com cookies as name=value strings; cookieHeader is the whole cookie header
-// for www.ticketmaster.com (SID, BID, eps_sid and the rest). Returns the tmpt Set-Cookie line.
-async function getTmpt({ apiKey, userAgent, anchorUrl, anchorHtml, cookies, cookieHeader }) {
+// pageUrl is the page from step 2; anchorUrl and anchorHtml come from step 3. cookies are your
+// non-HttpOnly www.ticketmaster.com cookies as name=value strings; cookieHeader is the whole cookie
+// header for www.ticketmaster.com (SID, BID, eps_sid and the rest). Returns the tmpt Set-Cookie line.
+async function getTmpt({ apiKey, userAgent, pageUrl, anchorUrl, anchorHtml, cookies, cookieHeader }) {
   // 4. Get the reload request as soon as the anchor arrives.
   const made = await fetch('https://tmpt.antibotapi.com/tmpt', {
     method: 'POST',
     headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_agent: userAgent, cookies, anchor_html: anchorHtml }),
+    body: JSON.stringify({ page_url: pageUrl, action: 'pageView', user_agent: userAgent, cookies, anchor_html: anchorHtml }),
   });
   if (!made.ok) throw new Error(`tmpt: ${made.status} ${await made.text()}`);
   const reload = Buffer.from((await made.json()).reload, 'base64'); // binary protobuf
@@ -501,7 +517,7 @@ async function getTmpt({ apiKey, userAgent, anchorUrl, anchorHtml, cookies, cook
   // 6. Hand the token to Ticketmaster. The response sets tmpt.
   const view = await fetch('https://www.ticketmaster.com/epsf/gec/v3/pageView', {
     method: 'POST',
-    headers: { 'user-agent': userAgent, 'content-type': 'application/json', referer: 'https://www.ticketmaster.com/', cookie: cookieHeader },
+    headers: { 'user-agent': userAgent, 'content-type': 'application/json', referer: pageUrl, cookie: cookieHeader },
     body: JSON.stringify({ hostname: 'www.ticketmaster.com', key: SITE_KEY, token }),
   });
   const tmpt = view.headers.getSetCookie().find((cookie) => cookie.startsWith('tmpt='));
@@ -522,15 +538,15 @@ import requests
 SITE_KEY = "6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV"
 
 
-def get_tmpt(session, api_key, user_agent, anchor_url, anchor_html, cookies):
+def get_tmpt(session, api_key, user_agent, page_url, anchor_url, anchor_html, cookies):
     """Steps 4-6. session is your Ticketmaster session, holding the cookies from step 2.
-    anchor_url and anchor_html come from step 3; cookies are your
-    non-HttpOnly www.ticketmaster.com cookies as name=value strings. Returns tmpt."""
+    page_url is the page from step 2; anchor_url and anchor_html come from step 3; cookies are
+    your non-HttpOnly www.ticketmaster.com cookies as name=value strings. Returns tmpt."""
     # 4. Get the reload request as soon as the anchor arrives.
     made = requests.post(
         "https://tmpt.antibotapi.com/tmpt",
         headers={"x-api-key": api_key},
-        json={"user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html},
+        json={"page_url": page_url, "action": "pageView", "user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html},
         timeout=30,
     )
     made.raise_for_status()
@@ -547,7 +563,7 @@ def get_tmpt(session, api_key, user_agent, anchor_url, anchor_html, cookies):
     # 6. Hand the token to Ticketmaster. The response sets tmpt.
     view = session.post(
         "https://www.ticketmaster.com/epsf/gec/v3/pageView",
-        headers={"user-agent": user_agent, "content-type": "application/json", "referer": "https://www.ticketmaster.com/"},
+        headers={"user-agent": user_agent, "content-type": "application/json", "referer": page_url},
         data=json.dumps({"hostname": "www.ticketmaster.com", "key": SITE_KEY, "token": token}, separators=(",", ":")),
     )
     tmpt = view.cookies.get("tmpt")
@@ -572,11 +588,11 @@ import (
 const siteKey = "6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV"
 
 // GetTmpt does steps 4-6. client is your Ticketmaster session, with a cookie jar holding the
-// cookies from step 2. anchorURL and anchorHTML come from step 3; cookies are
-// your non-HttpOnly www.ticketmaster.com cookies as name=value strings.
-func GetTmpt(client *http.Client, apiKey, userAgent, anchorURL, anchorHTML string, cookies []string) (*http.Cookie, error) {
+// cookies from step 2. pageURL is the page from step 2; anchorURL and anchorHTML come from step 3;
+// cookies are your non-HttpOnly www.ticketmaster.com cookies as name=value strings.
+func GetTmpt(client *http.Client, apiKey, userAgent, pageURL, anchorURL, anchorHTML string, cookies []string) (*http.Cookie, error) {
 	// 4. Get the reload request as soon as the anchor arrives.
-	body, _ := json.Marshal(map[string]any{"user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML})
+	body, _ := json.Marshal(map[string]any{"page_url": pageURL, "action": "pageView", "user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML})
 	req, _ := http.NewRequest("POST", "https://tmpt.antibotapi.com/tmpt", bytes.NewReader(body))
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -618,7 +634,7 @@ func GetTmpt(client *http.Client, apiKey, userAgent, anchorURL, anchorHTML strin
 	req, _ = http.NewRequest("POST", "https://www.ticketmaster.com/epsf/gec/v3/pageView", bytes.NewReader(view))
 	req.Header.Set("user-agent", userAgent)
 	req.Header.Set("content-type", "application/json")
-	req.Header.Set("referer", "https://www.ticketmaster.com/")
+	req.Header.Set("referer", pageURL)
 	resp, err = client.Do(req)
 	if err != nil {
 		return nil, err
@@ -636,6 +652,43 @@ func GetTmpt(client *http.Client, apiKey, userAgent, anchorURL, anchorHTML strin
 </TabItem>
 </Tabs>
 
+## The gate page
+
+Some pages, such as event pages, answer a new session with `401` and a gate page. The gate runs the same reCAPTCHA
+check, posts the token to `/epsf/gec/v3/Event`, and loads the page again once `tmpt` is set. Follow the steps above with
+these changes:
+
+| Step | Change |
+| --- | --- |
+| 2 | The page answers `401` and sets no cookies. Fetch `/eps-mgr` with `referer` set to the page. It sets `eps_sid`, the only cookie the gate has. |
+| 4 | Send `"action": "Event"`, the page as `page_url` and an empty `cookies` array. Call us about 700 ms after you request the anchor: the gate posts its reload 0.6 to 0.9 seconds after it asks for the anchor. |
+| 6 | Post the token to `/epsf/gec/v3/Event`, with `referer` set to the page and `eps_sid` as the only cookie. The body is the same, and the response sets `tmpt`. |
+
+Then load the page again, with `eps_sid` and `tmpt`:
+
+```http
+GET <the page's path> HTTP/2
+host: www.ticketmaster.com
+cache-control: max-age=0
+sec-ch-ua: "Google Chrome";v="155", "Chromium";v="155", "Not(A:Brand";v="24"
+sec-ch-ua-mobile: ?0
+sec-ch-ua-platform: "Windows"
+upgrade-insecure-requests: 1
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36
+accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7
+sec-fetch-site: same-origin
+sec-fetch-mode: navigate
+sec-fetch-dest: document
+referer: <the page>
+accept-encoding: gzip, deflate, br, zstd
+accept-language: en-GB,en-US;q=0.9,en;q=0.8
+cookie: eps_sid=...; tmpt=...
+priority: u=0, i
+```
+
+It answers `200` with the page itself. If it answers `403`, Ticketmaster has refused the session. Switch proxy and start
+again.
+
 ## Other Ticketmaster sites
 
 The same flow works on other Ticketmaster sites, such as `www.ticketmaster.nl`, `www.eticketing.co.uk` and
@@ -645,12 +698,12 @@ The same flow works on other Ticketmaster sites, such as `www.ticketmaster.nl`, 
 | --- | --- |
 | 2 | Open a page on the site, then its `/eps-mgr`. |
 | 3 | Set `co` to the site's origin in Base64, for example `https://www.eticketing.co.uk:443` is `aHR0cHM6Ly93d3cuZXRpY2tldGluZy5jby51azo0NDM.`. Set `referer` to the site's origin with a trailing `/`. |
-| 4 | Send the site's cookies that are not `HttpOnly`. |
+| 4 | Send the page you opened on the site as `page_url`, and the site's cookies that are not `HttpOnly`. |
 | 6 | Post to the site's own `/epsf/gec/v3/pageView`, with `hostname`, `origin` and `referer` from the site. |
 
 <Aside type="caution">
-Some sites post to `/epsf/gec/v3/Event` from their block page. Post to `/pageView` anyway. Our token is made for
-`pageView`, and `/Event` answers `200` without setting `tmpt`.
+Some sites post to `/epsf/gec/v3/Event` from their block page. On these sites, send `"action": "pageView"` and post to
+`/pageView` anyway. A `pageView` token posted to `/Event` answers `200` without setting `tmpt`.
 </Aside>
 
 ## When it fails
@@ -661,7 +714,7 @@ Some sites post to `/epsf/gec/v3/Event` from their block page. Post to `/pageVie
 | `401` | The API key is missing, wrong or out of balance. | Check the key. |
 | `409` | The anchor is from a reCAPTCHA version we do not support yet. | Fetch the anchor with the `version` from `GET /config`. |
 | `501` | This anchor asks for something we cannot build yet. Not billed. | Tell us. |
-| `503` | Temporarily unavailable. | Retry after a few seconds. |
+| `503` | We are still loading your `page_url`, or the service is temporarily unavailable. | Retry after a few seconds. |
 
 If Google returns no `rresp` token, or Ticketmaster does not set `tmpt`, check that your session used one proxy and one
 user agent throughout, and that your client matches Chrome.
