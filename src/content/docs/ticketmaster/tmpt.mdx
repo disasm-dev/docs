@@ -247,6 +247,7 @@ curl -X POST https://tmpt.antibotapi.com/tmpt \
   -H "Content-Type: application/json" \
   -d '{
     "page_url": "https://www.ticketmaster.com/",
+    "page_title": "Ticketmaster: Buy Verified Tickets for Concerts, Sports, Theater and Events",
     "action": "pageView",
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
     "cookies": ["LANGUAGE=en-us", "NDMA=200"],
@@ -259,11 +260,11 @@ curl -X POST https://tmpt.antibotapi.com/tmpt \
 
 ```js
 // anchorHtml comes from step 3. Returns the reload request body as bytes.
-async function getReload(apiKey, pageUrl, action, userAgent, cookies, anchorHtml) {
+async function getReload(apiKey, pageUrl, pageTitle, action, userAgent, cookies, anchorHtml) {
   const res = await fetch('https://tmpt.antibotapi.com/tmpt', {
     method: 'POST',
     headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ page_url: pageUrl, action, user_agent: userAgent, cookies, anchor_html: anchorHtml }),
+    body: JSON.stringify({ page_url: pageUrl, page_title: pageTitle, action, user_agent: userAgent, cookies, anchor_html: anchorHtml }),
   });
   if (!res.ok) throw new Error(`tmpt: ${res.status} ${await res.text()}`);
   return Buffer.from((await res.json()).reload, 'base64'); // binary protobuf
@@ -279,12 +280,12 @@ import base64
 import requests
 
 
-def get_reload(api_key: str, page_url: str, action: str, user_agent: str, cookies: list[str], anchor_html: str) -> bytes:
+def get_reload(api_key: str, page_url: str, page_title: str, action: str, user_agent: str, cookies: list[str], anchor_html: str) -> bytes:
     """anchor_html comes from step 3. Returns the reload request body as bytes."""
     res = requests.post(
         "https://tmpt.antibotapi.com/tmpt",
         headers={"x-api-key": api_key},
-        json={"page_url": page_url, "action": action, "user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html},
+        json={"page_url": page_url, "page_title": page_title, "action": action, "user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html},
         timeout=30,
     )
     res.raise_for_status()
@@ -305,8 +306,8 @@ import (
 )
 
 // GetReload returns the reload request body as bytes. anchorHTML comes from step 3.
-func GetReload(apiKey, pageURL, action, userAgent string, cookies []string, anchorHTML string) ([]byte, error) {
-	body, _ := json.Marshal(map[string]any{"page_url": pageURL, "action": action, "user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML})
+func GetReload(apiKey, pageURL, pageTitle, action, userAgent string, cookies []string, anchorHTML string) ([]byte, error) {
+	body, _ := json.Marshal(map[string]any{"page_url": pageURL, "page_title": pageTitle, "action": action, "user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML})
 	req, _ := http.NewRequest("POST", "https://tmpt.antibotapi.com/tmpt", bytes.NewReader(body))
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -335,6 +336,7 @@ func GetReload(apiKey, pageURL, action, userAgent string, cookies []string, anch
 | Field | What to send |
 | --- | --- |
 | `page_url` | The page you opened in step 2, as the address bar shows it. |
+| `page_title` | That page's title, as `document.title` gives it: the text of its `<title>`. |
 | `action` | `pageView` for a normal page, `Event` for [the gate page](#the-gate-page). It names the endpoint the token goes to in step 6. |
 | `user_agent` | Your session's `User-Agent`. |
 | `cookies` | Your `www.ticketmaster.com` cookies that are not `HttpOnly`, as `name=value` strings. Leave out `tmpt`. An empty array is fine. |
@@ -493,15 +495,15 @@ They use `parseToken` from step 5.
 ```js
 const SITE_KEY = '6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV';
 
-// pageUrl is the page from step 2; anchorUrl and anchorHtml come from step 3. cookies are your
-// non-HttpOnly www.ticketmaster.com cookies as name=value strings; cookieHeader is the whole cookie
-// header for www.ticketmaster.com (SID, BID, eps_sid and the rest). Returns the tmpt Set-Cookie line.
-async function getTmpt({ apiKey, userAgent, pageUrl, anchorUrl, anchorHtml, cookies, cookieHeader }) {
+// pageUrl and pageTitle are the page from step 2; anchorUrl and anchorHtml come from step 3. cookies
+// are your non-HttpOnly www.ticketmaster.com cookies as name=value strings; cookieHeader is the whole
+// cookie header for www.ticketmaster.com (SID, BID, eps_sid and the rest). Returns the tmpt Set-Cookie line.
+async function getTmpt({ apiKey, userAgent, pageUrl, pageTitle, anchorUrl, anchorHtml, cookies, cookieHeader }) {
   // 4. Get the reload request as soon as the anchor arrives.
   const made = await fetch('https://tmpt.antibotapi.com/tmpt', {
     method: 'POST',
     headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ page_url: pageUrl, action: 'pageView', user_agent: userAgent, cookies, anchor_html: anchorHtml }),
+    body: JSON.stringify({ page_url: pageUrl, page_title: pageTitle, action: 'pageView', user_agent: userAgent, cookies, anchor_html: anchorHtml }),
   });
   if (!made.ok) throw new Error(`tmpt: ${made.status} ${await made.text()}`);
   const reload = Buffer.from((await made.json()).reload, 'base64'); // binary protobuf
@@ -538,15 +540,15 @@ import requests
 SITE_KEY = "6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV"
 
 
-def get_tmpt(session, api_key, user_agent, page_url, anchor_url, anchor_html, cookies):
+def get_tmpt(session, api_key, user_agent, page_url, page_title, anchor_url, anchor_html, cookies):
     """Steps 4-6. session is your Ticketmaster session, holding the cookies from step 2.
-    page_url is the page from step 2; anchor_url and anchor_html come from step 3; cookies are
-    your non-HttpOnly www.ticketmaster.com cookies as name=value strings. Returns tmpt."""
+    page_url and page_title are the page from step 2; anchor_url and anchor_html come from step 3;
+    cookies are your non-HttpOnly www.ticketmaster.com cookies as name=value strings. Returns tmpt."""
     # 4. Get the reload request as soon as the anchor arrives.
     made = requests.post(
         "https://tmpt.antibotapi.com/tmpt",
         headers={"x-api-key": api_key},
-        json={"page_url": page_url, "action": "pageView", "user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html},
+        json={"page_url": page_url, "page_title": page_title, "action": "pageView", "user_agent": user_agent, "cookies": cookies, "anchor_html": anchor_html},
         timeout=30,
     )
     made.raise_for_status()
@@ -588,11 +590,11 @@ import (
 const siteKey = "6LcvL3UrAAAAAO_9u8Seiuf-I6F_tP_jSS-zndXV"
 
 // GetTmpt does steps 4-6. client is your Ticketmaster session, with a cookie jar holding the
-// cookies from step 2. pageURL is the page from step 2; anchorURL and anchorHTML come from step 3;
-// cookies are your non-HttpOnly www.ticketmaster.com cookies as name=value strings.
-func GetTmpt(client *http.Client, apiKey, userAgent, pageURL, anchorURL, anchorHTML string, cookies []string) (*http.Cookie, error) {
+// cookies from step 2. pageURL and pageTitle are the page from step 2; anchorURL and anchorHTML come
+// from step 3; cookies are your non-HttpOnly www.ticketmaster.com cookies as name=value strings.
+func GetTmpt(client *http.Client, apiKey, userAgent, pageURL, pageTitle, anchorURL, anchorHTML string, cookies []string) (*http.Cookie, error) {
 	// 4. Get the reload request as soon as the anchor arrives.
-	body, _ := json.Marshal(map[string]any{"page_url": pageURL, "action": "pageView", "user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML})
+	body, _ := json.Marshal(map[string]any{"page_url": pageURL, "page_title": pageTitle, "action": "pageView", "user_agent": userAgent, "cookies": cookies, "anchor_html": anchorHTML})
 	req, _ := http.NewRequest("POST", "https://tmpt.antibotapi.com/tmpt", bytes.NewReader(body))
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -661,7 +663,7 @@ these changes:
 | Step | Change |
 | --- | --- |
 | 2 | The page answers `401` and sets no cookies. Fetch `/eps-mgr` with `referer` set to the page. It sets `eps_sid`, the only cookie the gate has. |
-| 4 | Send `"action": "Event"`, the page as `page_url` and an empty `cookies` array. Call us about 700 ms after you request the anchor: the gate posts its reload 0.6 to 0.9 seconds after it asks for the anchor. |
+| 4 | Send `"action": "Event"`, the page as `page_url`, the gate's title (`Your Browsing Activity Has Been Paused`) as `page_title` and an empty `cookies` array. Call us about 700 ms after you request the anchor: the gate posts its reload 0.6 to 0.9 seconds after it asks for the anchor. |
 | 6 | Post the token to `/epsf/gec/v3/Event`, with `referer` set to the page and `eps_sid` as the only cookie. The body is the same, and the response sets `tmpt`. |
 
 Then load the page again, with `eps_sid` and `tmpt`:
@@ -698,7 +700,7 @@ The same flow works on other Ticketmaster sites, such as `www.ticketmaster.nl`, 
 | --- | --- |
 | 2 | Open a page on the site, then its `/eps-mgr`. |
 | 3 | Set `co` to the site's origin in Base64, for example `https://www.eticketing.co.uk:443` is `aHR0cHM6Ly93d3cuZXRpY2tldGluZy5jby51azo0NDM.`. Set `referer` to the site's origin with a trailing `/`. |
-| 4 | Send the page you opened on the site as `page_url`, and the site's cookies that are not `HttpOnly`. |
+| 4 | Send the page you opened on the site as `page_url`, its title as `page_title`, and the site's cookies that are not `HttpOnly`. |
 | 6 | Post to the site's own `/epsf/gec/v3/pageView`, with `hostname`, `origin` and `referer` from the site. |
 
 <Aside type="caution">

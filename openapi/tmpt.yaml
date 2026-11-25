@@ -66,6 +66,7 @@ paths:
               $ref: '#/components/schemas/TmptRequest'
             example:
               page_url: https://www.ticketmaster.com/
+              page_title: 'Ticketmaster: Buy Verified Tickets for Concerts, Sports, Theater and Events'
               action: pageView
               user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36
               cookies: [LANGUAGE=en-us, NDMA=200]
@@ -174,7 +175,7 @@ components:
           description: The reCAPTCHA release. Use it as the anchor URL's `v` parameter.
     TmptRequest:
       type: object
-      required: [page_url, action, user_agent, cookies, anchor_html]
+      required: [page_url, page_title, action, user_agent, cookies, anchor_html]
       properties:
         page_url:
           type: string
@@ -183,6 +184,11 @@ components:
             The page your session is on, the one the anchor belongs to: the full URL as the address bar shows it, such
             as `https://www.ticketmaster.com/`. We load the page ourselves. The first request for a page answers `503`
             until it has loaded.
+        page_title:
+          type: string
+          description: |
+            The title of the page your session is on, as `document.title` gives it: the text of the page's `<title>`.
+            On the gate page, the gate's own title, such as `Your Browsing Activity Has Been Paused`.
         action:
           type: string
           enum: [pageView, Event]
